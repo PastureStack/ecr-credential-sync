@@ -1,5 +1,6 @@
 #!/bin/bash
-set -e
+# Modified by PastureStack contributors for independent maintenance and rebranding.
+set -euo pipefail
 
 source $(dirname $0)/version
 
@@ -9,25 +10,68 @@ SCRIPTPATH="$(cd "$(dirname "$0")"; pwd -P)"
 [ "${ARCH}" != "amd64" ] && SUFFIX="_${ARCH}"
 
 cd $(dirname $0)/../package
+PACKAGE_DIR=$(pwd -P)
 
 TAG=${TAG:-${VERSION}${SUFFIX}}
-REPO=${REPO:-rancher}
+REPO=${REPO:-ghcr.io/${IMAGE_NAMESPACE:-pasturestack}}
+REVISION=$(git -C .. rev-parse HEAD)
 
-cp ../bin/rancher-ecr-credentials .
+cleanup() {
+  rm -f \
+    "${PACKAGE_DIR}/ecr-credential-sync" \
+    "${PACKAGE_DIR}/LICENSE" \
+    "${PACKAGE_DIR}/SECURITY.md" \
+    "${PACKAGE_DIR}/ORIGIN.md" \
+    "${PACKAGE_DIR}/COMPATIBILITY.md" \
+    "${PACKAGE_DIR}/THIRD_PARTY_NOTICES.md"
+  rm -rf "${PACKAGE_DIR}/licenses"
+}
+trap cleanup EXIT
 
-IMAGE=${REPO}/rancher-ecr-credentials:${TAG}
-docker build -t ${IMAGE} .
-mkdir -p dist && rm -rf dist/*
-echo ${IMAGE} > ../dist/images
-echo Built ${IMAGE}
+cp ../bin/ecr-credential-sync .
+cp \
+  ../LICENSE \
+  ../SECURITY.md \
+  ../ORIGIN.md \
+  ../COMPATIBILITY.md \
+  ../THIRD_PARTY_NOTICES.md \
+  .
+
+legal_count=0
+while IFS= read -r legal_file; do
+  target="licenses/third-party/${legal_file#vendor/}"
+  install -D -m 0644 "../${legal_file}" "$target"
+  legal_count=$((legal_count + 1))
+done < <(
+  git -C .. ls-files 'vendor/**' |
+    grep -E '(^|/)(LICENSE[^/]*|NOTICE[^/]*|AUTHORS[^/]*)$' |
+    LC_ALL=C sort
+)
+test "$legal_count" -eq 10
+
+IMAGE=${REPO}/ecr-credential-sync:${TAG}
+docker build \
+  --pull \
+  --network "${DOCKER_BUILD_NETWORK:-host}" \
+  --build-arg UBUNTU_MIRROR="${UBUNTU_MIRROR:-http://archive.ubuntu.com/ubuntu}" \
+  --build-arg VERSION="${TAG}" \
+  --build-arg REVISION="${REVISION}" \
+  -t "${IMAGE}" \
+  .
+test "$(docker image inspect "$IMAGE" --format '{{index .Config.Labels "org.opencontainers.image.version"}}')" = "$TAG"
+test "$(docker image inspect "$IMAGE" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')" = "$REVISION"
+test "$(docker image inspect "$IMAGE" --format '{{.Config.User}}')" = 10001:10001
+mkdir -p ../dist
+echo "${IMAGE}" > ../dist/images
+echo "Built ${IMAGE}"
 
 package() {
   local os arch suffix tag repo env image_name binary_name
   os=$1
   arch=$2
-  image_name="rancher-ecr-credentials"
-  binary_name="rancher-ecr-credentials"
-  if [ "$WINDOWS_DOCKER_HOST" == "" -a "$os" == "windows" ]; then
+  image_name="ecr-credential-sync"
+  binary_name="ecr-credential-sync"
+  if [ "${WINDOWS_DOCKER_HOST:-}" == "" -a "$os" == "windows" ]; then
       echo "WINDOWS_DOCKER_HOST is not set, skip packaging Windows image"
       return
   fi
@@ -44,7 +88,7 @@ package() {
   cp bin/$os/$arch/$binary_name package/$os/$arch
 
   # because if building windows image, need to connect to docker on windows. set DOCKER_HOST for docker build context
-  [ "$os" == "windows" ] && dhost="tcp://$WINDOWS_DOCKER_HOST:2375" || dhost="$DOCKER_HOST"
+  [ "$os" == "windows" ] && dhost="tcp://$WINDOWS_DOCKER_HOST:2375" || dhost="${DOCKER_HOST:-}"
   DOCKER_HOST=$dhost docker build -t ${REPO}/${image_name}:${tag} -f package/$os/$arch/Dockerfile package/$os/$arch
 
   echo ${REPO}/${image_name}:${tag} >> dist/images
@@ -54,7 +98,7 @@ package() {
 source $SCRIPTPATH/version
 cd $SCRIPTPATH/..
 
-if [ -n "$CROSS" ]; then
+if [ -n "${CROSS:-}" ]; then
     for os in $(ls bin); do
         for arch in $(ls bin/$os); do
             package $os $arch

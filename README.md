@@ -1,93 +1,104 @@
-# Rancher ECR Credentials Updater
+<!-- Modified by PastureStack contributors for independent maintenance and rebranding. -->
 
-[![Apache License 2.0](https://img.shields.io/badge/license-Apache_License_2.0-blue.svg)](https://github.com/rancher/rancher-ecr-credentials/blob/master/LICENSE)
+# ECR Credential Sync
 
-This is a Docker container that when executed will update the Docker registry
-credentials in Rancher for an Amazon Elastic Container Registry.
+> PastureStack is an independent community effort to preserve, audit, and modernize the Rancher 1.6 ecosystem. It is not affiliated with or endorsed by Rancher Labs or SUSE.
 
-Originally contributed by John Engelman from [Object Partners](http://www.objectpartners.com). 
+**Upstream:** [`rancher/rancher-ecr-credentials`](https://github.com/rancher/rancher-ecr-credentials). This GitHub fork retains the upstream Git history, authorship, dates, and license notices unchanged; PastureStack maintenance is consolidated into one commit after the preserved upstream boundary.
 
-## Why is this needed?
+ECR Credential Sync refreshes temporary Amazon Elastic Container Registry
+credentials in a compatible legacy control-plane environment. It requests ECR
+authorization tokens through the AWS SDK, finds the matching registry resource,
+and updates its username and password. When `AUTO_CREATE=true`, it can create a
+missing registry and credential resource.
 
-Because access to ECR is controlled with AWS IAM.
-An IAM user must request a temporary credential to the registry using the AWS API.
-This temporary credential is then valid for 12 hours.
+This repository preserves the complete upstream Git history and contributor
+record. PastureStack contributors claim authorship only for their own changes.
+See [ORIGIN.md](ORIGIN.md) for provenance and [COMPATIBILITY.md](COMPATIBILITY.md)
+for the neutral runtime contract.
 
-Rancher only supports registries that authenticate with a username and password.
+## Runtime behavior
 
-## How to use
+- Synchronizes credentials immediately after startup and then every six hours.
+- Supports the default AWS credential provider chain and optional IAM role
+  assumption through `AWS_ROLE_ARN`.
+- Supports one or more account IDs through `AWS_ECR_REGISTRY_IDS`.
+- Exposes `GET /ping` on port `8080` by default; set `LISTEN_PORT` to override it.
+- Retries temporary ECR and environment API failures with a bounded
+  incremental backoff. Successful requests do not wait or retry.
+- Creates a missing credential record for an existing registry when
+  `AUTO_CREATE=true`.
+- Runs as the unprivileged numeric user `10001:10001`.
 
-In order to authenticate with AWS ECR, this Docker container uses the default
-chain of [credential providers](http://docs.aws.amazon.com/cli/latest/userguide/cli-chap-getting-started.html#config-settings-and-precedence).
+## Configuration
 
-The only requirement for running this application is to specify the AWS region
-using the `AWS_REGION` environment variable.
+| Variable | Required | Purpose |
+| --- | --- | --- |
+| `AWS_REGION` | Yes | AWS region containing the ECR registry. |
+| `AWS_ACCESS_KEY_ID` | Depends on AWS environment | Static access key when no role, profile, or instance identity is available. |
+| `AWS_SECRET_ACCESS_KEY` | Depends on AWS environment | Static secret key paired with the access key. |
+| `AWS_SESSION_TOKEN` | No | Session token for temporary AWS credentials. |
+| `AWS_PROFILE` | No | Profile from a mounted shared AWS configuration. |
+| `AWS_ROLE_ARN` | No | IAM role to assume before requesting ECR tokens. |
+| `AWS_ECR_REGISTRY_IDS` | No | Comma-separated AWS account IDs to synchronize. |
+| `AWS_ECR_ENDPOINT_URL` | No | Alternate HTTP(S) ECR API endpoint for an AWS-compatible service or isolated validation. |
+| `AUTO_CREATE` | No | Create a missing platform registry when set to `true`; default is `false`. |
+| `LOG_LEVEL` | No | Logrus level such as `info`, `warn`, or `debug`. |
+| `LISTEN_PORT` | No | Health endpoint port; default is `8080`. |
+| `PLATFORM_URL` | Yes | Compatible environment API endpoint. |
+| `PLATFORM_ACCESS_KEY` | Yes | Environment API access key. |
+| `PLATFORM_SECRET_KEY` | Yes | Environment API secret key. |
 
-AWS credentials are loaded using the default [AWS credential chain](http://docs.aws.amazon.com/sdk-for-go/latest/v1/developerguide/configuring-sdk.title.html).
-Credentials are loaded in the following order:
+Catalog templates must inject the `PLATFORM_*` variables documented in
+[COMPATIBILITY.md](COMPATIBILITY.md).
 
-1. Assumed IAM Role specified in `AWS_ROLE_ARN` (The credentials used to execute the assume are determined using the following rules)
-1. Environment variables (Specify `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION`, and `AWS_SESSION_TOKEN` *(optional)*)
-1. Shared credentials file (mount a volume to `/root/.aws` that contains `credentials` and `config` files and specify `AWS_PROFILE`)
-1. IAM Instance Profile (if running on EC2)
+Use least-privilege AWS permissions that allow ECR authorization token requests.
+If a shared AWS configuration is mounted under `/home/pasturestack/.aws`,
+protect the mount as credential-bearing data.
 
-Add the following labels to the service in Rancher:
-* `io.rancher.container.create_agent: true`
-* `io.rancher.container.agent.role: environment`
-
-These labels will cause Rancher to provision an API key for this service and
-create the `CATTLE_URL`, `CATTLE_ACCESS_KEY`, and `CATTLE_SECRET_KEY`
-environment variables.
-
-## Auto creating registry in Rancher
-
-This tool allows for automatically defining the ECR registry in Rancher by
-setting the `AUTO_CREATE` environment variable to `true`.
-When enabled, if the updater does not find an existing registry in Rancher
-for the ECR URL, then it will automatically create the registry with the
-proper credentials.
-Subsequent executions of the update will simply update the credentials in Rancher
-per normal operation.
-
-## Configuring alternative ECR registries
-
-By default the updater will acquire login tokens for the default registry
-associated with the AWS account for the credentials used to access the AWS API.
-This can be modified by providing the `AWS_ECR_REGISTRY_IDS` environment
-variable to the container.
-The variable should contain a comma (`,`) separated listed of account IDs to
-acquire tokens for.
-When specified, only the accounts provided will be looked up.
-Each account will return an authorization token that will be used to update
-and associated registry in Rancher.
-
-## Running container outside of Rancher
-
-If you are running this container outside of a Rancher managed environment, then
-you must provide the following environment variables in additional to the ones
-above.
-* `CATTLE_URL`
-* `CATTLE_ACCESS_KEY`
-* `CATTLE_SECRET_KEY`
+## Container example
 
 ```bash
-$ docker run -d -e AWS_REGION=us-east-1 -e AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY -e CATTLE_URL=http://rancher.mydomain.com -e CATTLE_ACCESS_KEY=$CATTLE_ACCESS_KEY -e CATTLE_SECRET_KEY=$CATTLE_SECRET_KEY objectpartners/rancher-ecr-credentials:latest
+docker run --rm \
+  -e AWS_REGION=us-east-1 \
+  -e AWS_ACCESS_KEY_ID \
+  -e AWS_SECRET_ACCESS_KEY \
+  -e PLATFORM_URL \
+  -e PLATFORM_ACCESS_KEY \
+  -e PLATFORM_SECRET_KEY \
+  ghcr.io/pasturestack/ecr-credential-sync:v3.1.0
 ```
 
-## Notes
+Do not publish a mutable `latest` tag. Deployment examples and Catalog
+templates use immutable semantic version tags; release digests are retained
+only in internal validation evidence.
 
-The AWS credentials must correspond to an IAM user that has permissions to call
-the ECR `GetToken` API.
-The application then parses the resulting response to retrieve the ECR registry
-URL, username, and password.
-The returned registry URL, is used to discover the corresponding registry in
-Rancher.
+## Local build and test
 
-Rancher stores registries by environment.
-If multiple environments exists, one instance of this container must be run per
-environment.
-Rancher credentials are tied to an environment, so specifying them will indicate
-which environment to update in Rancher.
+The project uses a containerized Go 1.26.5 build environment with vendored
+dependencies.
 
-__NOTE__: This application runs on a 6 hour loop. It's possible there could be a
-slight gap where the credentials expire before this program updates them.
+```bash
+VERSION_OVERRIDE=v3.1.0 ARCH=amd64 make build
+VERSION_OVERRIDE=v3.1.0 ARCH=amd64 make test
+```
+
+These commands are local build and test targets. CI/CD publication and release
+automation are outside this proof-of-concept scope.
+
+## Security and support
+
+Read [SECURITY.md](SECURITY.md) before deployment. This compatibility component
+handles AWS and platform credentials and must not be exposed as a public
+general-purpose service.
+
+The affiliation disclaimer at the top of this README applies to all builds and
+distributions. Use the PastureStack repository issue tracker for
+project-specific reports, without including credentials, authorization tokens,
+or private URLs.
+
+## License
+
+The project remains licensed under the existing [Apache License 2.0](LICENSE).
+The license was not replaced by PastureStack. Vendored dependencies retain their
+own copyright, license, and notice files; redistribution must preserve them.

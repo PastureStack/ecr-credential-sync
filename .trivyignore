@@ -1,0 +1,5 @@
+# Modified by PastureStack contributors for independent maintenance and rebranding.
+# Legacy 1.6 catalog workloads historically run this helper as root so
+# mounted AWS shared credentials under /root/.aws continue to work. Keep this
+# as the only Dockerfile misconfiguration ignore for this compatibility slice.
+DS-0002

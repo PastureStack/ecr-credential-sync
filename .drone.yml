@@ -1,7 +1,9 @@
 pipeline:
   build:
-    image: rancher/dapper:1.10.3
+    image: ubuntu:26.04
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     commands:
-      - dapper ci
+      - apt-get update
+      - apt-get install -y --no-install-recommends ca-certificates docker.io make
+      - make ci

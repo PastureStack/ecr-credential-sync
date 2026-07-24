@@ -1,3 +1,6 @@
-FROM microsoft/nanoserver:10.0.14393.1593
-COPY rancher-ecr-credentials.exe  /
-CMD /rancher-ecr-credentials.exe
+# escape=`
+FROM mcr.microsoft.com/windows/servercore:ltsc2022
+
+SHELL ["cmd", "/S", "/C"]
+
+RUN echo The Windows ECR credentials image build path is intentionally disabled until a Windows host compatibility matrix is restored. && exit /b 1

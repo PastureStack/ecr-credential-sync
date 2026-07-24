@@ -1,0 +1,87 @@
+#!/bin/bash
+set -euo pipefail
+
+repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+cd "$repo_root"
+
+failure_count=0
+
+require_marker() {
+  local file=$1
+  local marker=$2
+  local code=$3
+  if ! grep -F -- "$marker" "$file" >/dev/null; then
+    printf '%s file=%s marker=%s\n' "$code" "$file" "$marker" >&2
+    failure_count=$((failure_count + 1))
+  fi
+}
+
+reject_marker() {
+  local file=$1
+  local marker=$2
+  local code=$3
+  if grep -F -- "$marker" "$file" >/dev/null; then
+    printf '%s file=%s marker=%s\n' "$code" "$file" "$marker" >&2
+    failure_count=$((failure_count + 1))
+  fi
+}
+
+require_marker Dockerfile.dapper 'ARG GO_VERSION=1.26.5' ECR_SYNC_GO_VERSION_NOT_CURRENT
+require_marker Dockerfile.dapper 'ARG GO_LINUX_AMD64_SHA256=5c2c3b16caefa1d968a94c1daca04a7ca301a496d9b086e17ad77bb81393f053' ECR_SYNC_GO_AMD64_SHA_MISSING
+require_marker Dockerfile.dapper 'ARG GO_LINUX_ARM64_SHA256=fe4789e92b1f33358680864bbe8704289e7bb5fc207d80623c308935bd696d49' ECR_SYNC_GO_ARM64_SHA_MISSING
+require_marker Dockerfile.dapper 'ARG DOCKER_LINUX_AMD64_SHA256=e985c6dc5008b8d62d6bdf9b5894427d075b335a1391cacf24ee01a7a29a3728' ECR_SYNC_DOCKER_AMD64_SHA_MISSING
+require_marker Dockerfile.dapper 'ARG DOCKER_LINUX_ARM64_SHA256=ce2cea8c740707d736ab356239f858d2272470d0734b5d14f20b950d1d6b952e' ECR_SYNC_DOCKER_ARM64_SHA_MISSING
+require_marker Dockerfile.dapper 'echo "${docker_sha}  /tmp/docker.tgz" | sha256sum -c -' ECR_SYNC_DOCKER_SHA_NOT_CHECKED
+reject_marker Dockerfile.dapper 'curl -fsSL "https://download.docker.com' ECR_SYNC_DOCKER_DOWNLOAD_UNBOUNDED
+require_marker package/Dockerfile 'USER 10001:10001' ECR_SYNC_RUNTIME_NOT_NON_ROOT
+require_marker package/Dockerfile 'COPY licenses/third-party/ /licenses/third-party/' ECR_SYNC_RUNTIME_LEGAL_FILES_MISSING
+require_marker package/Dockerfile 'org.opencontainers.image.version="${VERSION}"' ECR_SYNC_OCI_VERSION_MISSING
+require_marker package/Dockerfile 'org.opencontainers.image.revision="${REVISION}"' ECR_SYNC_OCI_REVISION_MISSING
+require_marker scripts/package 'test "$legal_count" -eq 10' ECR_SYNC_LEGAL_COUNT_GATE_MISSING
+require_marker main.go 'AWS_ECR_ENDPOINT_URL' ECR_SYNC_ECR_ENDPOINT_OVERRIDE_MISSING
+require_marker main.go 'errors.Join(synchronizationErrors...)' ECR_SYNC_PLATFORM_FAILURE_RETRY_MISSING
+require_marker main.go 'defaultCredentialEmail = "not-required@invalid"' ECR_SYNC_RESERVED_EMAIL_MISSING
+require_marker internal/platformapi/client.go 'endpoint := service.client.baseURL + "/registryCredentials/" + url.PathEscape(existing.ID)' ECR_SYNC_UNTRUSTED_SELF_LINK_NOT_IGNORED
+require_marker README.md 'ghcr.io/pasturestack/ecr-credential-sync:v3.1.0' ECR_SYNC_README_VERSION_TAG_MISSING
+
+legal_count=$(
+  git ls-files 'vendor/**' |
+    grep -E '(^|/)(LICENSE[^/]*|NOTICE[^/]*|AUTHORS[^/]*)$' |
+    wc -l
+)
+if [ "$legal_count" -ne 10 ]; then
+  printf 'ECR_SYNC_LEGAL_FILE_COUNT_MISMATCH count=%s expected=10\n' "$legal_count" >&2
+  failure_count=$((failure_count + 1))
+fi
+
+if grep -RInE --exclude-dir=.git --exclude-dir=vendor \
+  --exclude=check-source-gates \
+  --exclude=README.md --exclude=ORIGIN.md --exclude=THIRD_PARTY_NOTICES.md \
+  'chen21019|10\.0\.0\.125' . >/dev/null; then
+  printf 'ECR_SYNC_PUBLIC_IDENTITY_OR_PRIVATE_HOST_FOUND\n' >&2
+  failure_count=$((failure_count + 1))
+fi
+
+if grep -RInE --exclude-dir=.git --exclude-dir=vendor \
+  --exclude=check-source-gates \
+  --exclude=README.md --exclude=ORIGIN.md --exclude=COMPATIBILITY.md \
+  --exclude=THIRD_PARTY_NOTICES.md --exclude=UNOFFICIAL_MAINTENANCE_FORK.md \
+  'rancher' . >/dev/null; then
+  printf 'ECR_SYNC_BRAND_REFERENCE_OUTSIDE_ATTRIBUTION_FOUND\n' >&2
+  failure_count=$((failure_count + 1))
+fi
+
+if grep -RInE --exclude-dir=.git --exclude-dir=vendor \
+  'ghcr\.io/pasturestack/ecr-credential-sync:((latest|main|master)([^[:alnum:]._-]|$)|[^[:space:]]*@sha256:)' \
+  README.md COMPATIBILITY.md package scripts main.go internal >/dev/null; then
+  printf 'ECR_SYNC_MUTABLE_OR_DIGEST_OPERATIONAL_REFERENCE_FOUND\n' >&2
+  failure_count=$((failure_count + 1))
+fi
+
+printf 'failure_count=%s\n' "$failure_count"
+if [ "$failure_count" -ne 0 ]; then
+  exit 1
+fi
+
+printf 'ECR_SYNC_SOURCE_GATES_OK go=1.26.5 ubuntu=26.04 non_root=1 legal_files=%s endpoint_override=bounded\n' \
+  "$legal_count"

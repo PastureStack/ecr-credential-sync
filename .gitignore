@@ -1,4 +1,5 @@
 # Compiled Object files, Static and Dynamic libs (Shared Objects)
+# Modified by PastureStack contributors for independent maintenance and rebranding.
 *.o
 *.a
 *.so
@@ -22,7 +23,8 @@ _testmain.go
 *.exe
 *.test
 *.prof
-rancher-ecr-credentials
+ecr-credential-sync
+bin/
 
 .trash-cache
 .dapper
