@@ -1,3 +1,7 @@
-FROM microsoft/nanoserver:10.0.14393.1593
-COPY rancher-ecr-credentials.exe  /
-CMD /rancher-ecr-credentials.exe
+# escape=`
+FROM mcr.microsoft.com/windows/nanoserver:ltsc2022
+
+COPY ecr-credential-sync.exe C:\pasturestack\ecr-credential-sync.exe
+
+USER ContainerUser
+ENTRYPOINT ["C:\\pasturestack\\ecr-credential-sync.exe"]
