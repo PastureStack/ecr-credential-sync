@@ -10,4 +10,12 @@ PACKAGES=$(go list ./... | grep -Ev '(/vendor/|/mocks$)' || true)
 echo Running: go vet
 go vet ${PACKAGES}
 echo Running: go fmt
-test -z "$(go fmt ${PACKAGES} | tee /dev/stderr)"
+unformatted=$(find . -name '*.go' \
+  -not -path './vendor/*' \
+  -not -path './.git/*' \
+  -not -path './bin/*' \
+  -print0 | xargs -0 gofmt -l)
+if [ -n "${unformatted}" ]; then
+  printf '%s\n' "${unformatted}" >&2
+  exit 1
+fi

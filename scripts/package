@@ -15,6 +15,8 @@ PACKAGE_DIR=$(pwd -P)
 TAG=${TAG:-${VERSION}${SUFFIX}}
 REPO=${REPO:-ghcr.io/${IMAGE_NAMESPACE:-pasturestack}}
 REVISION=$(git -C .. rev-parse HEAD)
+SOURCE_DATE_EPOCH=$(git -C .. show -s --format=%ct HEAD)
+export SOURCE_DATE_EPOCH
 
 cleanup() {
   rm -f \
@@ -23,7 +25,8 @@ cleanup() {
     "${PACKAGE_DIR}/SECURITY.md" \
     "${PACKAGE_DIR}/ORIGIN.md" \
     "${PACKAGE_DIR}/COMPATIBILITY.md" \
-    "${PACKAGE_DIR}/THIRD_PARTY_NOTICES.md"
+    "${PACKAGE_DIR}/THIRD_PARTY_NOTICES.md" \
+    "${PACKAGE_DIR}/ubuntu-apt.lock"
   rm -rf "${PACKAGE_DIR}/licenses"
 }
 trap cleanup EXIT
@@ -35,6 +38,7 @@ cp \
   ../ORIGIN.md \
   ../COMPATIBILITY.md \
   ../THIRD_PARTY_NOTICES.md \
+  ../ubuntu-apt.lock \
   .
 
 legal_count=0
@@ -50,13 +54,17 @@ done < <(
 test "$legal_count" -eq 10
 
 IMAGE=${REPO}/ecr-credential-sync:${TAG}
-docker build \
+docker buildx build \
+  --load \
   --pull \
   --network "${DOCKER_BUILD_NETWORK:-host}" \
-  --build-arg UBUNTU_MIRROR="${UBUNTU_MIRROR:-http://archive.ubuntu.com/ubuntu}" \
+  --provenance=false \
+  --sbom=false \
+  --build-arg UBUNTU_APT_SNAPSHOT="${UBUNTU_APT_SNAPSHOT:-20260808T000000Z}" \
+  --build-arg SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH}" \
   --build-arg VERSION="${TAG}" \
   --build-arg REVISION="${REVISION}" \
-  -t "${IMAGE}" \
+  --tag "${IMAGE}" \
   .
 test "$(docker image inspect "$IMAGE" --format '{{index .Config.Labels "org.opencontainers.image.version"}}')" = "$TAG"
 test "$(docker image inspect "$IMAGE" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')" = "$REVISION"

@@ -1,0 +1,419 @@
+name: PastureStack / Build, test, and supply-chain evidence
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ecr-credential-sync-supply-chain-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Reproducible build, test, SBOM, and Trivy gate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      DAPPER_IMAGE: local/ecr-credential-sync-dapper:${{ github.sha }}
+      VERSION_OVERRIDE: v3.1.0
+      TRIVY_IMAGE: aquasec/trivy:0.74.0@sha256:62b1e65e8869bc4b4c6aa4fa2b21595256c7c2f6018a9d9ad61caf87187c1969
+
+    steps:
+      - name: Check out candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Record immutable source inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -z "$(git status --porcelain)"
+          mkdir -p evidence
+          git rev-parse HEAD > evidence/source-revision.txt
+          sha256sum \
+            .dockerignore \
+            ubuntu-apt.lock \
+            Dockerfile.dapper \
+            Makefile \
+            package/Dockerfile \
+            package/windows/amd64/Dockerfile \
+            toolchain/buildx-security.patch \
+            scripts/build \
+            scripts/ci \
+            scripts/entry \
+            scripts/package \
+            scripts/check-source-gates \
+            scripts/generate-source-sbom.py \
+            scripts/test \
+            scripts/validate \
+            security/openvex.json \
+            .github/workflows/supply-chain.yml \
+            > evidence/source-inputs.sha256
+          docker version > evidence/runner-docker-version.txt
+          bash ./scripts/check-source-gates | tee evidence/build-policy.txt
+
+      - name: Build, test, validate, package, and prove reproducibility
+        shell: bash
+        run: |
+          set -euo pipefail
+          make ci DAPPER_IMAGE="$DAPPER_IMAGE" VERSION_OVERRIDE="$VERSION_OVERRIDE"
+          expected_owner="$(id -u):$(id -g)"
+          test "$(stat -c '%u:%g' bin/ecr-credential-sync)" = "$expected_owner"
+          test "$(stat -c '%u:%g' dist/images)" = "$expected_owner"
+          runtime_image="$(head -n 1 dist/images)"
+          first_image_id="$(docker image inspect --format '{{.Id}}' "$runtime_image")"
+          printf '%s\n' "$runtime_image" > evidence/runtime-image.txt
+          printf '%s\n' "$first_image_id" > evidence/runtime-image-first-id.txt
+          sha256sum bin/ecr-credential-sync > evidence/ecr-credential-sync-first.sha256
+
+          docker image rm "$runtime_image" "$DAPPER_IMAGE" >/dev/null
+          rm -rf bin dist
+          docker builder prune --all --force >/dev/null
+
+          make ci DAPPER_IMAGE="$DAPPER_IMAGE" VERSION_OVERRIDE="$VERSION_OVERRIDE"
+          test "$(head -n 1 dist/images)" = "$runtime_image"
+          second_image_id="$(docker image inspect --format '{{.Id}}' "$runtime_image")"
+          printf '%s\n' "$second_image_id" > evidence/runtime-image-second-id.txt
+          test "$first_image_id" = "$second_image_id"
+          sha256sum bin/ecr-credential-sync > evidence/ecr-credential-sync-second.sha256
+          diff -u \
+            evidence/ecr-credential-sync-first.sha256 \
+            evidence/ecr-credential-sync-second.sha256
+          test -z "$(git status --porcelain --untracked-files=no)"
+          printf 'RUNTIME_IMAGE=%s\n' "$runtime_image" >> "$GITHUB_ENV"
+
+      - name: Verify resolved package and toolchain manifests
+        shell: bash
+        run: |
+          set -euo pipefail
+          snapshot="$(. ./ubuntu-apt.lock; printf '%s' "$UBUNTU_APT_LOCKED_SNAPSHOT")"
+
+          verify_dpkg_manifest() {
+            local image="$1"
+            local prefix="$2"
+            local manifest_path="$3"
+
+            docker inspect "$image" > "evidence/${prefix}-image-inspect.json"
+            docker run --rm --entrypoint cat "$image" \
+              /usr/share/pasturestack/manifests/ubuntu-apt.lock \
+              > "evidence/${prefix}-ubuntu-apt.lock"
+            diff -u ubuntu-apt.lock "evidence/${prefix}-ubuntu-apt.lock"
+            docker run --rm --entrypoint cat "$image" "$manifest_path" \
+              > "evidence/${prefix}-dpkg.tsv"
+            {
+              printf 'record\tname\tarchitecture\tversion\n'
+              printf 'metadata\tschema\t-\tpasturestack.dpkg-manifest/v1\n'
+              printf 'metadata\tubuntu_snapshot\t-\t%s\n' "$snapshot"
+              if [ "$prefix" = runtime ]; then
+                printf 'metadata\tbase_image\t-\t%s\n' \
+                  'ubuntu:26.04@sha256:678c6550cc43645e08669028bc177f50be4e7c5b8cca677067b1914d4afc7a03'
+              fi
+              docker run --rm --entrypoint dpkg-query "$image" \
+                -W "-f=package\t\${binary:Package}\t\${Architecture}\t\${Version}\n" \
+                | LC_ALL=C sort
+            } > "evidence/${prefix}-dpkg-live.tsv"
+            diff -u "evidence/${prefix}-dpkg.tsv" "evidence/${prefix}-dpkg-live.tsv"
+            test "$(grep -c '^package' "evidence/${prefix}-dpkg.tsv")" -gt 0
+          }
+
+          verify_dpkg_manifest \
+            "$DAPPER_IMAGE" dapper \
+            /usr/share/pasturestack/manifests/dapper-ubuntu-packages.tsv
+          verify_dpkg_manifest \
+            "$RUNTIME_IMAGE" runtime \
+            /usr/share/pasturestack/manifests/runtime-ubuntu-packages.tsv
+
+          docker run --rm --entrypoint cat "$DAPPER_IMAGE" \
+            /usr/share/pasturestack/manifests/dapper-toolchain.tsv \
+            > evidence/dapper-toolchain.tsv
+          awk -F '\t' '
+            NR == 1 {
+              if ($0 != "component\tdeclared_version\ttarget\tinstalled_sha256\tinstalled_version") {
+                exit 1
+              }
+              next
+            }
+            $4 !~ /^[0-9a-f]+$/ || length($4) != 64 || $5 == "" { exit 1 }
+            END { if (NR != 5) exit 1 }
+          ' evidence/dapper-toolchain.tsv
+          grep -F $'gcc\t4:15.2.0-5ubuntu1\tlinux-amd64\t' evidence/dapper-toolchain.tsv >/dev/null
+          grep -F $'go\t1.26.6\tlinux-amd64\t' evidence/dapper-toolchain.tsv >/dev/null
+          grep -F $'docker\t29.7.2\tlinux-amd64\t' evidence/dapper-toolchain.tsv >/dev/null
+          grep -F $'buildx\t0.36.1\tlinux-amd64\t' evidence/dapper-toolchain.tsv >/dev/null
+          docker run --rm --entrypoint cat "$DAPPER_IMAGE" \
+            /usr/share/pasturestack/manifests/buildx-go-version.txt \
+            > evidence/buildx-go-version.txt
+          docker run --rm --entrypoint cat "$DAPPER_IMAGE" \
+            /usr/share/pasturestack/patches/buildx-security.patch \
+            > evidence/buildx-security.patch
+          diff -u toolchain/buildx-security.patch evidence/buildx-security.patch
+          echo '9d424e752f24ea0e34ccd80340428f067ae8109204c401c93786a2b0be6ea993  evidence/buildx-security.patch' | sha256sum -c -
+          if grep -F $'dep\tgithub.com/docker/docker\t' evidence/buildx-go-version.txt; then
+            echo 'patched Buildx binary still records github.com/docker/docker' >&2
+            exit 1
+          fi
+          docker run --rm --entrypoint go \
+            --volume "$PWD:/work:ro" "$DAPPER_IMAGE" \
+            version -m /work/bin/ecr-credential-sync \
+            > evidence/ecr-credential-sync-go-version.txt
+          docker run --rm \
+            --volume "$PWD:/go/src/github.com/PastureStack/ecr-credential-sync:ro" \
+            --entrypoint /bin/bash "$DAPPER_IMAGE" -lc \
+            'set -euo pipefail; GO111MODULE=off go list -deps ./...' \
+            | LC_ALL=C sort -u > evidence/source-go-dependencies.txt
+          if grep -Fqx 'github.com/aws/aws-sdk-go/service/s3/s3crypto' \
+            evidence/source-go-dependencies.txt; then
+            echo 'The vulnerable S3 encryption package is reachable.' >&2
+            exit 1
+          fi
+
+      - name: Generate SBOMs and Trivy reports
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker pull "$TRIVY_IMAGE"
+          docker inspect "$TRIVY_IMAGE" > evidence/trivy-image-inspect.json
+          docker run --rm "$TRIVY_IMAGE" --version > evidence/trivy-version.txt
+          trivy_cache="$RUNNER_TEMP/trivy-cache"
+          source_tree="$(mktemp -d)"
+          cleanup_scan() {
+            rm -rf "$source_tree"
+          }
+          trap cleanup_scan EXIT
+          mkdir -p "$trivy_cache"
+          git archive --format=tar HEAD | tar -xf - -C "$source_tree"
+
+          docker run --rm \
+            --volume "$trivy_cache:/root/.cache/trivy" \
+            "$TRIVY_IMAGE" image --download-db-only
+          (
+            cd "$trivy_cache"
+            find . -type f -print0 | LC_ALL=C sort -z | xargs -0 -r sha256sum
+          ) > evidence/trivy-database.sha256
+
+          docker run --rm \
+            --volume "$source_tree:/scan:ro" \
+            --volume "$PWD/evidence:/evidence" \
+            --volume "$trivy_cache:/root/.cache/trivy" \
+            "$TRIVY_IMAGE" fs \
+            --skip-db-update --offline-scan --scanners vuln,secret \
+            --format json --output /evidence/source-security.json /scan
+          docker run --rm \
+            --volume /var/run/docker.sock:/var/run/docker.sock \
+            --volume "$PWD/evidence:/evidence" \
+            --volume "$trivy_cache:/root/.cache/trivy" \
+            "$TRIVY_IMAGE" image \
+            --skip-db-update --offline-scan --scanners vuln,secret \
+            --format json --output /evidence/dapper-security.json \
+            "$DAPPER_IMAGE"
+          docker run --rm \
+            --volume /var/run/docker.sock:/var/run/docker.sock \
+            --volume "$PWD/evidence:/evidence" \
+            --volume "$trivy_cache:/root/.cache/trivy" \
+            "$TRIVY_IMAGE" image \
+            --skip-db-update --offline-scan --scanners vuln,secret \
+            --format json --output /evidence/runtime-security.json \
+            "$RUNTIME_IMAGE"
+
+          python3 scripts/generate-source-sbom.py \
+            --output evidence/source.cdx.json
+          cp security/openvex.json evidence/source.openvex.json
+          docker run --rm \
+            --volume "$PWD/evidence:/evidence" \
+            --volume "$trivy_cache:/root/.cache/trivy" \
+            "$TRIVY_IMAGE" sbom \
+            --skip-db-update --offline-scan \
+            --format json --output /evidence/source-sbom-security.json \
+            /evidence/source.cdx.json
+          docker run --rm \
+            --volume /var/run/docker.sock:/var/run/docker.sock \
+            --volume "$PWD/evidence:/evidence" \
+            --volume "$trivy_cache:/root/.cache/trivy" \
+            "$TRIVY_IMAGE" image \
+            --skip-db-update --offline-scan --format cyclonedx \
+            --output /evidence/dapper.cdx.json "$DAPPER_IMAGE"
+          docker run --rm \
+            --volume /var/run/docker.sock:/var/run/docker.sock \
+            --volume "$PWD/evidence:/evidence" \
+            --volume "$trivy_cache:/root/.cache/trivy" \
+            "$TRIVY_IMAGE" image \
+            --skip-db-update --offline-scan --format cyclonedx \
+            --output /evidence/runtime.cdx.json "$RUNTIME_IMAGE"
+
+      - name: Enforce source, builder, and runtime security policy
+        shell: bash
+        run: |
+          set -euo pipefail
+          : > evidence/security-summary.txt
+
+          for scope in source runtime; do
+            report="evidence/${scope}-security.json"
+            secrets="$(jq '[.Results[]?.Secrets[]?] | length' "$report")"
+            critical="$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity == "CRITICAL")] | length' "$report")"
+            high="$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity == "HIGH")] | length' "$report")"
+            printf '%s_secrets=%s\n%s_critical=%s\n%s_high=%s\n' \
+              "$scope" "$secrets" "$scope" "$critical" "$scope" "$high" \
+              | tee -a evidence/security-summary.txt
+            test "$secrets" -eq 0
+            test "$critical" -eq 0
+            test "$high" -eq 0
+          done
+
+          source_sbom_report=evidence/source-sbom-security.json
+          source_sbom_critical="$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity == "CRITICAL")] | length' "$source_sbom_report")"
+          source_sbom_expected_fixed="$(jq '[
+            .Results[]?.Vulnerabilities[]?
+            | select(.VulnerabilityID == "CVE-2025-65637")
+            | select(.PkgName == "github.com/sirupsen/logrus")
+            | select(.InstalledVersion == "v0.10.0")
+          ] | length' "$source_sbom_report")"
+          source_sbom_expected_not_affected="$(jq '[
+            .Results[]?.Vulnerabilities[]?
+            | select(.VulnerabilityID == "CVE-2020-8911" or .VulnerabilityID == "CVE-2020-8912" or .VulnerabilityID == "CVE-2022-2582")
+            | select(.PkgName == "github.com/aws/aws-sdk-go")
+            | select(.InstalledVersion == "v1.8.0")
+          ] | length' "$source_sbom_report")"
+          source_sbom_unexpected="$(jq '[
+            .Results[]?.Vulnerabilities[]?
+            | select(
+                (
+                  .VulnerabilityID != "CVE-2025-65637"
+                  or .PkgName != "github.com/sirupsen/logrus"
+                  or .InstalledVersion != "v0.10.0"
+                )
+                and
+                (
+                  (.VulnerabilityID != "CVE-2020-8911" and .VulnerabilityID != "CVE-2020-8912" and .VulnerabilityID != "CVE-2022-2582")
+                  or .PkgName != "github.com/aws/aws-sdk-go"
+                  or .InstalledVersion != "v1.8.0"
+                )
+              )
+          ] | length' "$source_sbom_report")"
+          jq -e '.statements | length == 4' evidence/source.openvex.json >/dev/null
+          jq -e '
+            [.statements[]
+              | select(.vulnerability.name == "CVE-2025-65637")
+              | select(.status == "fixed")
+              | select((.products | length) == 1)
+              | select(.products[0]["@id"] == "pkg:golang/github.com/sirupsen/logrus@v0.10.0")
+              | select(.status_notes | contains("6acd903758687c4a3db3c11701e6c414fcf1c1f7"))
+              | select(.status_notes | contains("d40e25cd45ed9c6b2b66e6b97573a0413e4c23bd"))
+            ] | length == 1
+          ' evidence/source.openvex.json >/dev/null
+          jq -e '
+            [.statements[]
+              | select(.vulnerability.name == "CVE-2020-8911" or .vulnerability.name == "CVE-2020-8912" or .vulnerability.name == "CVE-2022-2582")
+              | select(.status == "not_affected")
+              | select(.justification == "vulnerable_code_not_present")
+              | select((.products | length) == 1)
+              | select(.products[0]["@id"] == "pkg:golang/github.com/aws/aws-sdk-go@v1.8.0")
+              | select(.impact_statement | contains("S3 encryption client package is neither vendored nor linked"))
+              | .vulnerability.name
+            ] | sort == ["CVE-2020-8911", "CVE-2020-8912", "CVE-2022-2582"]
+          ' evidence/source.openvex.json >/dev/null
+          printf 'source_sbom_raw_critical=%s\nsource_sbom_expected_fixed=%s\nsource_sbom_expected_not_affected=%s\nsource_sbom_unexpected=%s\nsource_sbom_applicable=0\n' \
+            "$source_sbom_critical" "$source_sbom_expected_fixed" "$source_sbom_expected_not_affected" "$source_sbom_unexpected" \
+            | tee -a evidence/security-summary.txt
+          test "$source_sbom_critical" -eq 0
+          test "$source_sbom_expected_fixed" -eq 1
+          test "$source_sbom_expected_not_affected" -eq 3
+          test "$source_sbom_unexpected" -eq 0
+
+          dapper_report=evidence/dapper-security.json
+          dapper_secrets="$(jq '[.Results[]?.Secrets[]?] | length' "$dapper_report")"
+          dapper_unreviewed="$(jq '[
+            .Results[]?.Vulnerabilities[]?
+            | select(.Severity == "CRITICAL" or .Severity == "HIGH")
+            | select(.PkgName != "linux-libc-dev" or ((.FixedVersion // "") != ""))
+          ] | length' "$dapper_report")"
+          vex_expires='2026-09-15T00:00:00Z'
+          test "$(date -u +%s)" -lt "$(date -u -d "$vex_expires" +%s)"
+          jq -r '.Results[]?.Vulnerabilities[]?
+            | select(.Severity == "CRITICAL" or .Severity == "HIGH")
+            | [.VulnerabilityID, .PkgName, .InstalledVersion, (.FixedVersion // ""), .Severity]
+            | @tsv' "$dapper_report" | LC_ALL=C sort -u \
+            > evidence/dapper-critical-high.tsv
+          jq -n \
+            --slurpfile report "$dapper_report" \
+            --arg author 'PastureStack Security' \
+            --arg timestamp "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" \
+            --arg expires "$vex_expires" \
+            --arg impact 'linux-libc-dev supplies user-space kernel API headers only in the disposable build and race-test image. The package is not copied into the product runtime image, so the vulnerable kernel implementation is not present.' \
+            '{
+              "@context":"https://openvex.dev/ns/v0.2.0",
+              "@id":"https://github.com/PastureStack/ecr-credential-sync/security/openvex/dapper",
+              author:$author,
+              timestamp:$timestamp,
+              "x-pasturestack-expires":$expires,
+              version:1,
+              statements:[
+                $report[0].Results[]?.Vulnerabilities[]?
+                | select((.Severity == "CRITICAL" or .Severity == "HIGH") and .PkgName == "linux-libc-dev" and ((.FixedVersion // "") == ""))
+                | {
+                    vulnerability:{name:.VulnerabilityID},
+                    products:[{"@id":.PkgIdentifier.PURL}],
+                    status:"not_affected",
+                    justification:"vulnerable_code_not_present",
+                    impact_statement:$impact
+                  }
+              ]
+            }' > evidence/dapper.openvex.json
+          dapper_reviewed="$(jq '.statements | length' evidence/dapper.openvex.json)"
+          printf 'dapper_secrets=%s\ndapper_reviewed_unfixed_linux_libc_dev=%s\ndapper_unreviewed_critical_high=%s\n' \
+            "$dapper_secrets" "$dapper_reviewed" "$dapper_unreviewed" \
+            | tee -a evidence/security-summary.txt
+          test "$dapper_secrets" -eq 0
+          test "$dapper_unreviewed" -eq 0
+          ! grep -Eq $'^package\tlinux-libc-dev([:]|\t)' evidence/runtime-dpkg.tsv
+          test "$dapper_reviewed" -eq "$(wc -l < evidence/dapper-critical-high.tsv)"
+          jq -e --arg expires "$vex_expires" '
+            .["x-pasturestack-expires"] == $expires and
+            all(.statements[];
+              .status == "not_affected" and
+              .justification == "vulnerable_code_not_present" and
+              (.products | length) == 1 and
+              (.products[0]["@id"] | type == "string" and length > 0))
+          ' evidence/dapper.openvex.json >/dev/null
+
+          for sbom in evidence/source.cdx.json evidence/dapper.cdx.json evidence/runtime.cdx.json; do
+            jq -e '.bomFormat == "CycloneDX"' "$sbom" >/dev/null
+          done
+          for sbom in evidence/source.cdx.json evidence/dapper.cdx.json evidence/runtime.cdx.json; do
+            jq -e '([.components[]?] | length) > 0' "$sbom" >/dev/null
+          done
+
+      - name: Upload review evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ecr-credential-sync-supply-chain-${{ github.sha }}
+          path: evidence/
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Clean runner resources
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          images=("$DAPPER_IMAGE" "$TRIVY_IMAGE")
+          if [ -n "${RUNTIME_IMAGE:-}" ]; then
+            images+=("$RUNTIME_IMAGE")
+          fi
+          for image in "${images[@]}"; do
+            if docker image inspect "$image" >/dev/null 2>&1; then
+              docker image rm -f "$image" >/dev/null
+            fi
+          done
+          docker builder prune --all --force >/dev/null
+          rm -rf bin dist evidence "$RUNNER_TEMP/trivy-cache"

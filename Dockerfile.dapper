@@ -1,38 +1,89 @@
-ARG UBUNTU_IMAGE=ubuntu:26.04@sha256:3131b4cc82a783df6c9df078f86e01819a13594b865c2cad47bd1bca2b7063bb
+ARG UBUNTU_IMAGE=ubuntu:26.04@sha256:678c6550cc43645e08669028bc177f50be4e7c5b8cca677067b1914d4afc7a03
+
+FROM ${UBUNTU_IMAGE} AS snapshot-ca-bootstrap
+
+ADD --checksum=sha256:6077d27c6b6f8b23590cb01ff877ed8c804a67a5442cc32b5a33da10d2bd0e90 \
+    https://snapshot.ubuntu.com/ubuntu/20260808T000000Z/pool/main/c/ca-certificates/ca-certificates_20260601~26.04.1_all.deb \
+    /tmp/ca-certificates.deb
+
+RUN set -eux; \
+    rm -rf /tmp/ca-bootstrap; \
+    mkdir -p /tmp/ca-bootstrap; \
+    dpkg-deb --extract /tmp/ca-certificates.deb /tmp/ca-bootstrap; \
+    find /tmp/ca-bootstrap/usr/share/ca-certificates -type f -name '*.crt' \
+        | LC_ALL=C sort \
+        | while IFS= read -r certificate; do sed -e '$a\' "${certificate}"; done \
+        > /snapshot-ca-certificates.crt; \
+    test -s /snapshot-ca-certificates.crt
+
 FROM ${UBUNTU_IMAGE}
 
 # Modified by PastureStack contributors for independent maintenance and rebranding.
 
+COPY --from=snapshot-ca-bootstrap /snapshot-ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+COPY ubuntu-apt.lock /usr/share/pasturestack/manifests/ubuntu-apt.lock
+COPY toolchain/buildx-security.patch /usr/share/pasturestack/patches/buildx-security.patch
+
 ARG DAPPER_HOST_ARCH=amd64
-ARG GO_VERSION=1.26.5
-ARG DOCKER_VERSION=29.4.2
-ARG UBUNTU_MIRROR=http://archive.ubuntu.com/ubuntu
-ARG GO_LINUX_AMD64_SHA256=5c2c3b16caefa1d968a94c1daca04a7ca301a496d9b086e17ad77bb81393f053
-ARG GO_LINUX_ARM64_SHA256=fe4789e92b1f33358680864bbe8704289e7bb5fc207d80623c308935bd696d49
-ARG DOCKER_LINUX_AMD64_SHA256=e985c6dc5008b8d62d6bdf9b5894427d075b335a1391cacf24ee01a7a29a3728
-ARG DOCKER_LINUX_ARM64_SHA256=ce2cea8c740707d736ab356239f858d2272470d0734b5d14f20b950d1d6b952e
+ARG GO_VERSION=1.26.6
+ARG DOCKER_VERSION=29.7.2
+ARG BUILDX_VERSION=0.36.1
+ARG BUILDX_GIT_COMMIT=1d8dde89b8aba914e05e45366770736fea1fd690
+ARG BUILDX_SOURCE_DATE_EPOCH=1785856317
+ARG BUILDX_SOURCE_SHA256=fb28b5c2a198d05482f0656dfb7ee161240a904e36697bf7108e5d517f23854b
+ARG BUILDX_SECURITY_PATCH_SHA256=9d424e752f24ea0e34ccd80340428f067ae8109204c401c93786a2b0be6ea993
+ARG UBUNTU_APT_SNAPSHOT=20260808T000000Z
+ARG GO_LINUX_AMD64_SHA256=708effb774be8237570d0add163225abbdfaf4fca28b2611df167beba4feef89
+ARG GO_LINUX_ARM64_SHA256=d0507e9e9d7fe012aae570108cbd76c15de879e17130ab8cb90d4d7445cb1f2e
+ARG DOCKER_LINUX_AMD64_SHA256=803d433f226db4776e1768fd319fc6c6e4935a456acf84fcc0080818b854bc8f
+ARG DOCKER_LINUX_ARM64_SHA256=43d143448adf2c2787704e7d7704fd6d62d367a54c5edaef0a3f75509cb0938d
+
 ENV HOST_ARCH=${DAPPER_HOST_ARCH} ARCH=${DAPPER_HOST_ARCH}
 ENV DEBIAN_FRONTEND=noninteractive
 
 RUN set -eux; \
-    if [ -f /etc/apt/sources.list.d/ubuntu.sources ]; then \
-        sed -i "s|http://archive.ubuntu.com/ubuntu|${UBUNTU_MIRROR}|g; s|http://security.ubuntu.com/ubuntu|${UBUNTU_MIRROR}|g" /etc/apt/sources.list.d/ubuntu.sources; \
-    fi; \
-    printf 'Acquire::Retries "5";\nAcquire::http::Timeout "30";\nAcquire::https::Timeout "30";\n' > /etc/apt/apt.conf.d/80pasturestack-retries; \
-    apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 update && \
+    . /usr/share/pasturestack/manifests/ubuntu-apt.lock; \
+    test "${UBUNTU_APT_SNAPSHOT}" = "${UBUNTU_APT_LOCKED_SNAPSHOT}"; \
+    rm -f /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; \
+    printf 'Types: deb\nURIs: https://snapshot.ubuntu.com/ubuntu/%s\nSuites: resolute resolute-updates resolute-backports resolute-security\nComponents: main universe restricted multiverse\nSigned-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\nSnapshot: no\n' \
+        "${UBUNTU_APT_SNAPSHOT}" > /etc/apt/sources.list.d/pasturestack-snapshot.sources; \
+    printf 'Acquire::Retries "5";\nAcquire::http::Timeout "30";\nAcquire::https::Timeout "30";\nAcquire::http::Pipeline-Depth "0";\nAcquire::https::CaInfo "/etc/ssl/certs/ca-certificates.crt";\nAcquire::https::Verify-Peer "true";\nAcquire::https::Verify-Host "true";\nAcquire::AllowInsecureRepositories "false";\nAPT::Get::AllowUnauthenticated "false";\n' \
+        > /etc/apt/apt.conf.d/80pasturestack-snapshot; \
+    apt-get update; \
     apt-get install -y --no-install-recommends \
-        ca-certificates \
-        curl \
-        file \
-        gcc \
-        git \
-        jq \
-        libc6-dev \
-        make \
-        tar \
-        xz-utils && \
-    rm -rf /var/lib/apt/lists/* && \
-    rm -f /usr/bin/pebble && \
+        bash="${UBUNTU_APT_BASH_VERSION}" \
+        ca-certificates="${UBUNTU_APT_CA_CERTIFICATES_VERSION}" \
+        curl="${UBUNTU_APT_CURL_VERSION}" \
+        gcc="${UBUNTU_APT_GCC_VERSION}" \
+        git="${UBUNTU_APT_GIT_VERSION}" \
+        libc6-dev="${UBUNTU_APT_LIBC6_DEV_VERSION}" \
+        make="${UBUNTU_APT_MAKE_VERSION}" \
+        tar="${UBUNTU_APT_TAR_VERSION}" \
+        xz-utils="${UBUNTU_APT_XZ_UTILS_VERSION}"; \
+    for package_and_version in \
+        "bash=${UBUNTU_APT_BASH_VERSION}" \
+        "ca-certificates=${UBUNTU_APT_CA_CERTIFICATES_VERSION}" \
+        "curl=${UBUNTU_APT_CURL_VERSION}" \
+        "gcc=${UBUNTU_APT_GCC_VERSION}" \
+        "git=${UBUNTU_APT_GIT_VERSION}" \
+        "libc6-dev=${UBUNTU_APT_LIBC6_DEV_VERSION}" \
+        "make=${UBUNTU_APT_MAKE_VERSION}" \
+        "tar=${UBUNTU_APT_TAR_VERSION}" \
+        "xz-utils=${UBUNTU_APT_XZ_UTILS_VERSION}"; do \
+        package="${package_and_version%%=*}"; \
+        expected="${package_and_version#*=}"; \
+        test "$(dpkg-query -W -f='${Version}' "${package}")" = "${expected}"; \
+    done; \
+    { \
+        printf 'record\tname\tarchitecture\tversion\n'; \
+        printf 'metadata\tschema\t-\tpasturestack.dpkg-manifest/v1\n'; \
+        printf 'metadata\tubuntu_snapshot\t-\t%s\n' "${UBUNTU_APT_SNAPSHOT}"; \
+        dpkg-query -W -f='package\t${binary:Package}\t${Architecture}\t${Version}\n' | LC_ALL=C sort; \
+    } > /usr/share/pasturestack/manifests/dapper-ubuntu-packages.tsv; \
+    apt-get clean; \
+    rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/* /tmp/* /var/tmp/*; \
+    rm -f /var/log/apt/* /var/log/dpkg.log /var/log/alternatives.log /var/cache/ldconfig/aux-cache; \
+    rm -f /usr/bin/pebble; \
     rm -f /bin/sh && ln -s /bin/bash /bin/sh
 
 ENV GOPATH=/go \
@@ -72,10 +123,56 @@ RUN set -eux; \
     chmod +x /usr/bin/docker; \
     docker --version
 
+RUN set -eux; \
+    buildx_source_uri="https://codeload.github.com/docker/buildx/tar.gz/${BUILDX_GIT_COMMIT}"; \
+    curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 --connect-timeout 10 --max-time 300 \
+        -o /tmp/buildx.tar.gz "${buildx_source_uri}"; \
+    echo "${BUILDX_SOURCE_SHA256}  /tmp/buildx.tar.gz" | sha256sum -c -; \
+    echo "${BUILDX_SECURITY_PATCH_SHA256}  /usr/share/pasturestack/patches/buildx-security.patch" | sha256sum -c -; \
+    mkdir -p /tmp/buildx-src /usr/libexec/docker/cli-plugins; \
+    tar -xzf /tmp/buildx.tar.gz -C /tmp/buildx-src --strip-components=1; \
+    cd /tmp/buildx-src; \
+    git apply --check /usr/share/pasturestack/patches/buildx-security.patch; \
+    git apply /usr/share/pasturestack/patches/buildx-security.patch; \
+    GO111MODULE=on GOPROXY=off GOSUMDB=sum.golang.org go list -mod=vendor -deps ./cmd/buildx > /tmp/buildx-deps.txt; \
+    if grep '^github.com/docker/docker/' /tmp/buildx-deps.txt; then \
+        echo 'patched Buildx still compiles github.com/docker/docker' >&2; \
+        exit 1; \
+    fi; \
+    SOURCE_DATE_EPOCH="${BUILDX_SOURCE_DATE_EPOCH}" CGO_ENABLED=0 GO111MODULE=on GOPROXY=off GOSUMDB=sum.golang.org GOOS=linux GOARCH="${DAPPER_HOST_ARCH}" \
+        go build -mod=vendor -trimpath -buildvcs=false \
+        -ldflags "-s -w -buildid= -X github.com/docker/buildx/version.Version=${BUILDX_VERSION} -X github.com/docker/buildx/version.Revision=${BUILDX_GIT_COMMIT} -X github.com/docker/buildx/version.Package=github.com/docker/buildx" \
+        -o /usr/libexec/docker/cli-plugins/docker-buildx ./cmd/buildx; \
+    chmod +x /usr/libexec/docker/cli-plugins/docker-buildx; \
+    docker buildx version; \
+    go version -m /usr/libexec/docker/cli-plugins/docker-buildx > /usr/share/pasturestack/manifests/buildx-go-version.txt; \
+    if grep -F $'dep\tgithub.com/docker/docker\t' /usr/share/pasturestack/manifests/buildx-go-version.txt; then \
+        echo 'patched Buildx binary still records github.com/docker/docker' >&2; \
+        exit 1; \
+    fi; \
+    rm -rf /tmp/buildx-src /tmp/buildx.tar.gz /tmp/buildx-deps.txt /tmp/go-build-cache
+
+RUN set -eux; \
+    { \
+        printf 'component\tdeclared_version\ttarget\tinstalled_sha256\tinstalled_version\n'; \
+        printf 'gcc\t%s\tlinux-%s\t%s\t%s\n' \
+            "$(dpkg-query -W -f='${Version}' gcc)" "${DAPPER_HOST_ARCH}" \
+            "$(sha256sum /usr/bin/gcc | awk '{ print $1 }')" "$(gcc -dumpfullversion -dumpversion)"; \
+        printf 'go\t%s\tlinux-%s\t%s\t%s\n' \
+            "${GO_VERSION}" "${DAPPER_HOST_ARCH}" \
+            "$(sha256sum /usr/local/go/bin/go | awk '{ print $1 }')" "$(go version)"; \
+        printf 'docker\t%s\tlinux-%s\t%s\t%s\n' \
+            "${DOCKER_VERSION}" "${DAPPER_HOST_ARCH}" \
+            "$(sha256sum /usr/bin/docker | awk '{ print $1 }')" "$(docker --version)"; \
+        printf 'buildx\t%s\tlinux-%s\t%s\t%s\n' \
+            "${BUILDX_VERSION}" "${DAPPER_HOST_ARCH}" \
+            "$(sha256sum /usr/libexec/docker/cli-plugins/docker-buildx | awk '{ print $1 }')" "$(docker buildx version)"; \
+    } > /usr/share/pasturestack/manifests/dapper-toolchain.tsv
+
 ENV DAPPER_SOURCE=/go/src/github.com/PastureStack/ecr-credential-sync/
 ENV DAPPER_OUTPUT="./bin ./dist"
 ENV DAPPER_DOCKER_SOCKET=true
-ENV DAPPER_ENV="TAG REPO IMAGE_NAMESPACE VERSION_OVERRIDE CROSS WINDOWS_DOCKER_HOST DOCKER_BUILD_NETWORK UBUNTU_MIRROR"
+ENV DAPPER_ENV="TAG REPO IMAGE_NAMESPACE VERSION_OVERRIDE CROSS WINDOWS_DOCKER_HOST DOCKER_BUILD_NETWORK"
 ENV HOME=${DAPPER_SOURCE}
 WORKDIR ${DAPPER_SOURCE}
 

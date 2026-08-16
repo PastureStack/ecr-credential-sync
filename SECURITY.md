@@ -38,7 +38,7 @@ the test suite never waits on production delays.
 
 ## Build boundary
 
-- Build and runtime images use Ubuntu 26.04 and Go 1.26.5.
+- Build and runtime images use the digest-pinned Ubuntu 26.04 base. The build uses Go 1.26.6, Docker CLI 29.7.2, and the checksum-patched Buildx 0.36.1 source.
 - The build does not download the historical Dapper binary or use its retired
   upstream build image.
 - The Windows variant uses the Microsoft Nano Server LTSC 2022 base, runs as
@@ -47,6 +47,7 @@ the test suite never waits on production delays.
   container compatibility matrix before production rollout.
 - Runtime distributions include all ten tracked vendored license, notice, and
   author files in addition to the root license and attribution documents.
+- The source OpenVEX record is bound to exact dependency PURLs and is revalidated by package-absence and regression gates on every build. The disposable builder may assess only unfixed `linux-libc-dev` findings because the package supplies headers rather than the vulnerable kernel implementation and is absent from the runtime image. That exact-package assessment expires on 2026-09-15; every other builder finding fails the gate.
 - Do not add broad vulnerability, secret, or misconfiguration ignores.
 
 ## Reporting

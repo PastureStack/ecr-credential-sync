@@ -1,10 +1,11 @@
 # Modified by PastureStack contributors for independent maintenance and rebranding.
 TARGETS := $(shell ls scripts)
 
-DAPPER_IMAGE ?= pasturestack-ecr-credential-sync-dapper:ubuntu26
+DAPPER_IMAGE ?= pasturestack-ecr-credential-sync-dapper:go1.26.6-docker29.7.2-buildx0.36.1
 DAPPER_HOST_ARCH ?= amd64
-DOCKER_VERSION ?= 29.4.2
-UBUNTU_MIRROR ?= http://archive.ubuntu.com/ubuntu
+DOCKER_VERSION ?= 29.7.2
+BUILDX_VERSION ?= 0.36.1
+UBUNTU_APT_SNAPSHOT ?= 20260808T000000Z
 
 .PHONY: $(TARGETS) deps trash trash-keep dapper-image
 
@@ -13,7 +14,8 @@ dapper-image:
 		$(if $(DOCKER_BUILD_NETWORK),--network $(DOCKER_BUILD_NETWORK),) \
 		--build-arg DAPPER_HOST_ARCH=$(DAPPER_HOST_ARCH) \
 		--build-arg DOCKER_VERSION=$(DOCKER_VERSION) \
-		--build-arg UBUNTU_MIRROR=$(UBUNTU_MIRROR) \
+		--build-arg BUILDX_VERSION=$(BUILDX_VERSION) \
+		--build-arg UBUNTU_APT_SNAPSHOT=$(UBUNTU_APT_SNAPSHOT) \
 		-t $(DAPPER_IMAGE) \
 		-f Dockerfile.dapper .
 
@@ -31,7 +33,6 @@ $(TARGETS): dapper-image
 		-e CROSS \
 		-e WINDOWS_DOCKER_HOST \
 		-e DOCKER_BUILD_NETWORK \
-		-e UBUNTU_MIRROR=$(UBUNTU_MIRROR) \
 		$(DAPPER_IMAGE) $@
 
 trash:

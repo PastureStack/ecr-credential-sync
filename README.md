@@ -82,8 +82,14 @@ only in internal validation evidence.
 
 ## Local build and test
 
-The project uses a containerized Go 1.26.5 build environment with vendored
-dependencies.
+The project uses a containerized Go 1.26.6 build environment with vendored
+dependencies. The build image locks Docker CLI 29.7.2 and Buildx 0.36.1. A
+checksum-locked Buildx patch removes its sole compiled dependency on the legacy
+Docker module. The Ubuntu 26.04 base image is digest-pinned, and all direct APT
+packages are locked to the official `20260808T000000Z` Ubuntu snapshot. Each
+image records its resolved
+`dpkg` inventory, and the build image records the installed GCC, Go, Docker,
+and Buildx binaries.
 
 ```bash
 VERSION_OVERRIDE=v3.1.0 ARCH=amd64 make build
@@ -92,6 +98,31 @@ VERSION_OVERRIDE=v3.1.0 ARCH=amd64 make test
 
 These commands are local build and test targets. CI/CD publication and release
 automation are outside this proof-of-concept scope.
+
+GitHub Actions rebuilds the Linux binary and image twice without a build cache,
+compares their hashes, and produces source, build-image, and runtime CycloneDX
+SBOMs plus Trivy reports. The workflow never logs in to a registry, pushes an
+image, creates a release, or changes a deployment.
+
+The source SBOM intentionally inventories the preserved AWS SDK module even
+though only its ECR and supporting packages are vendored. Module-level scanners
+therefore report three S3 encryption-client advisories whose vulnerable package
+is absent from both the vendor tree and the executable. The exact OpenVEX record
+under `security/` documents that boundary; any new or unmatched source finding
+fails the supply-chain workflow.
+
+## Dependency version policy
+
+- Go, Docker CLI, Buildx, GitHub Actions, Linux and Windows base images, and
+  Trivy must use an exact version or immutable digest.
+- The Ubuntu snapshot and every direct APT package version are one atomic lock;
+  update them together and verify the resolved `dpkg` manifests.
+- Operational container references remain plain semantic version tags. Do not
+  use `latest`, branch tags, digest suffixes in user-facing image fields, or
+  product-specific suffixes in version numbers.
+- A version refresh is complete only after unit and race tests, reproducibility
+  checks, SBOM generation, vulnerability scanning, license checks, and the
+  downstream Catalog compatibility review all pass.
 
 ## Security and support
 

@@ -1,9 +1,0 @@
-pipeline:
-  build:
-    image: ubuntu:26.04
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-    commands:
-      - apt-get update
-      - apt-get install -y --no-install-recommends ca-certificates docker.io make
-      - make ci

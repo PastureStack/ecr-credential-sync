@@ -9,7 +9,11 @@ cd $(dirname $0)/..
 rm -rf bin/*
 
 mkdir -p bin
-CGO_ENABLED=0 go build -ldflags "-X main.VERSION=$VERSION -s -w" -o bin/ecr-credential-sync
+CGO_ENABLED=0 go build \
+    -trimpath \
+    -buildvcs=false \
+    -ldflags "-buildid= -X main.VERSION=$VERSION -s -w" \
+    -o bin/ecr-credential-sync
 
 declare -A OS_ARCH_ARG=()
 
@@ -26,7 +30,9 @@ if [ -n "${CROSS:-}" ]; then
             fi
             echo "Building binary for $OS/$ARCH..."
             GOARCH=$ARCH GOOS=$OS CGO_ENABLED=0 go build \
-                  -ldflags="-X main.VERSION=$VERSION -s -w" \
+                  -trimpath \
+                  -buildvcs=false \
+                  -ldflags="-buildid= -X main.VERSION=$VERSION -s -w" \
                   -o ${OUTPUT_BIN} ./
         done
     done
