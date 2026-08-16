@@ -6,16 +6,30 @@ DAPPER_HOST_ARCH ?= amd64
 DOCKER_VERSION ?= 29.7.2
 BUILDX_VERSION ?= 0.36.1
 UBUNTU_APT_SNAPSHOT ?= 20260808T000000Z
+DAPPER_SOURCE_DATE_EPOCH ?= $(shell git show -s --format=%ct HEAD)
+DAPPER_BUILDER ?=
+DAPPER_METADATA_FILE ?=
+DAPPER_NO_CACHE ?= false
 
 .PHONY: $(TARGETS) deps trash trash-keep dapper-image
 
 dapper-image:
-	docker build \
+	bash ./scripts/normalize-runtime-context-mtimes \
+		Dockerfile.dapper . $(DAPPER_SOURCE_DATE_EPOCH)
+	SOURCE_DATE_EPOCH=$(DAPPER_SOURCE_DATE_EPOCH) docker buildx build \
+		$(if $(DAPPER_BUILDER),--builder $(DAPPER_BUILDER),) \
+		$(if $(filter true,$(DAPPER_NO_CACHE)),--no-cache,) \
+		$(if $(DAPPER_METADATA_FILE),--metadata-file $(DAPPER_METADATA_FILE),) \
+		--output "type=docker,name=$(DAPPER_IMAGE),rewrite-timestamp=true,compatibility-version=20" \
+		--pull \
+		--provenance=false \
+		--sbom=false \
 		$(if $(DOCKER_BUILD_NETWORK),--network $(DOCKER_BUILD_NETWORK),) \
 		--build-arg DAPPER_HOST_ARCH=$(DAPPER_HOST_ARCH) \
 		--build-arg DOCKER_VERSION=$(DOCKER_VERSION) \
 		--build-arg BUILDX_VERSION=$(BUILDX_VERSION) \
 		--build-arg UBUNTU_APT_SNAPSHOT=$(UBUNTU_APT_SNAPSHOT) \
+		--build-arg SOURCE_DATE_EPOCH=$(DAPPER_SOURCE_DATE_EPOCH) \
 		-t $(DAPPER_IMAGE) \
 		-f Dockerfile.dapper .
 

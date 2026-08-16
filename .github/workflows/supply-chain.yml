@@ -67,7 +67,70 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          make ci DAPPER_IMAGE="$DAPPER_IMAGE" VERSION_OVERRIDE="$VERSION_OVERRIDE"
+          source_date_epoch="$(git show -s --format=%ct HEAD)"
+          expected_dapper_created="$(date -u --date="@${source_date_epoch}" +'%Y-%m-%dT%H:%M:%SZ')"
+          first_dapper_builder="ecr-dapper-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-first"
+          second_dapper_builder="ecr-dapper-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-second"
+
+          cleanup_dapper_builders() {
+            local builder
+            for builder in "$first_dapper_builder" "$second_dapper_builder"; do
+              if [ -n "$builder" ]; then
+                docker buildx rm --force "$builder" >/dev/null 2>&1 || :
+              fi
+            done
+          }
+          trap cleanup_dapper_builders EXIT
+
+          capture_dapper_state() {
+            local prefix="$1"
+            local metadata_file="$2"
+            local manifest
+
+            jq -er '."containerimage.digest" | select(test("^sha256:[0-9a-f]{64}$"))' \
+              "$metadata_file" > "evidence/${prefix}-manifest-digest.txt"
+            jq -er '."containerimage.config.digest" | select(test("^sha256:[0-9a-f]{64}$"))' \
+              "$metadata_file" > "evidence/${prefix}-config-digest.txt"
+            docker image inspect --format '{{.Id}}' "$DAPPER_IMAGE" \
+              > "evidence/${prefix}-image-id.txt"
+            grep -Eq '^sha256:[0-9a-f]{64}$' "evidence/${prefix}-image-id.txt"
+            docker image inspect --format '{{.Created}}' "$DAPPER_IMAGE" \
+              > "evidence/${prefix}-created.txt"
+            test "$(cat "evidence/${prefix}-created.txt")" = "$expected_dapper_created"
+            docker image inspect --format '{{json .RootFS.Layers}}' "$DAPPER_IMAGE" \
+              | jq -ce '
+                  if type == "array" and length > 0 and
+                     all(.[]; test("^sha256:[0-9a-f]{64}$"))
+                  then .
+                  else error("invalid or empty Dapper RootFS DiffID list")
+                  end
+                ' > "evidence/${prefix}-rootfs-diffids.json"
+            docker image inspect "$DAPPER_IMAGE" \
+              > "evidence/${prefix}-image-inspect.json"
+            docker run --rm --volume "$PWD:/source:ro" --entrypoint go "$DAPPER_IMAGE" \
+              version -m /source/bin/ecr-credential-sync \
+              > "evidence/${prefix}-binary-build-info.txt"
+            for manifest in \
+                ubuntu-apt.lock \
+                dapper-ubuntu-packages.tsv \
+                dapper-toolchain.tsv \
+                docker-cli-build.tsv \
+                docker-cli-go-version.txt \
+                buildx-go-version.txt; do
+              docker run --rm --entrypoint cat "$DAPPER_IMAGE" \
+                "/usr/share/pasturestack/manifests/${manifest}" \
+                > "evidence/${prefix}-${manifest}"
+            done
+          }
+
+          docker buildx create --driver docker-container --name "$first_dapper_builder" >/dev/null
+          make ci \
+            DAPPER_IMAGE="$DAPPER_IMAGE" \
+            DAPPER_BUILDER="$first_dapper_builder" \
+            DAPPER_METADATA_FILE="$PWD/evidence/dapper-first-build-metadata.json" \
+            DAPPER_NO_CACHE=true \
+            DAPPER_SOURCE_DATE_EPOCH="$source_date_epoch" \
+            VERSION_OVERRIDE="$VERSION_OVERRIDE"
           expected_owner="$(id -u):$(id -g)"
           test "$(stat -c '%u:%g' bin/ecr-credential-sync)" = "$expected_owner"
           test "$(stat -c '%u:%g' dist/images)" = "$expected_owner"
@@ -76,20 +139,53 @@ jobs:
           printf '%s\n' "$runtime_image" > evidence/runtime-image.txt
           printf '%s\n' "$first_image_id" > evidence/runtime-image-first-id.txt
           sha256sum bin/ecr-credential-sync > evidence/ecr-credential-sync-first.sha256
+          capture_dapper_state dapper-first \
+            evidence/dapper-first-build-metadata.json
 
           docker image rm "$runtime_image" "$DAPPER_IMAGE" >/dev/null
           rm -rf bin dist
+          docker buildx rm --force "$first_dapper_builder" >/dev/null
+          first_dapper_builder=
           docker builder prune --all --force >/dev/null
 
-          make ci DAPPER_IMAGE="$DAPPER_IMAGE" VERSION_OVERRIDE="$VERSION_OVERRIDE"
+          docker buildx create --driver docker-container --name "$second_dapper_builder" >/dev/null
+          make ci \
+            DAPPER_IMAGE="$DAPPER_IMAGE" \
+            DAPPER_BUILDER="$second_dapper_builder" \
+            DAPPER_METADATA_FILE="$PWD/evidence/dapper-second-build-metadata.json" \
+            DAPPER_NO_CACHE=true \
+            DAPPER_SOURCE_DATE_EPOCH="$source_date_epoch" \
+            VERSION_OVERRIDE="$VERSION_OVERRIDE"
           test "$(head -n 1 dist/images)" = "$runtime_image"
           second_image_id="$(docker image inspect --format '{{.Id}}' "$runtime_image")"
           printf '%s\n' "$second_image_id" > evidence/runtime-image-second-id.txt
           test "$first_image_id" = "$second_image_id"
           sha256sum bin/ecr-credential-sync > evidence/ecr-credential-sync-second.sha256
+          capture_dapper_state dapper-second \
+            evidence/dapper-second-build-metadata.json
           diff -u \
             evidence/ecr-credential-sync-first.sha256 \
             evidence/ecr-credential-sync-second.sha256
+          for artifact in \
+              image-id.txt \
+              manifest-digest.txt \
+              config-digest.txt \
+              created.txt \
+              rootfs-diffids.json \
+              binary-build-info.txt \
+              ubuntu-apt.lock \
+              dapper-ubuntu-packages.tsv \
+              dapper-toolchain.tsv \
+              docker-cli-build.tsv \
+              docker-cli-go-version.txt \
+              buildx-go-version.txt; do
+            diff -u \
+              "evidence/dapper-first-${artifact}" \
+              "evidence/dapper-second-${artifact}"
+          done
+          docker buildx rm --force "$second_dapper_builder" >/dev/null
+          second_dapper_builder=
+          trap - EXIT
           test -z "$(git status --porcelain --untracked-files=no)"
           printf 'RUNTIME_IMAGE=%s\n' "$runtime_image" >> "$GITHUB_ENV"
 

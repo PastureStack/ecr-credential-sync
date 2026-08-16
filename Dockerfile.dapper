@@ -2,6 +2,8 @@ ARG UBUNTU_IMAGE=ubuntu:26.04@sha256:678c6550cc43645e08669028bc177f50be4e7c5b8cc
 
 FROM ${UBUNTU_IMAGE} AS snapshot-ca-bootstrap
 
+ARG SOURCE_DATE_EPOCH
+
 ADD --checksum=sha256:6077d27c6b6f8b23590cb01ff877ed8c804a67a5442cc32b5a33da10d2bd0e90 \
     https://snapshot.ubuntu.com/ubuntu/20260808T000000Z/pool/main/c/ca-certificates/ca-certificates_20260601~26.04.1_all.deb \
     /tmp/ca-certificates.deb
@@ -14,15 +16,27 @@ RUN set -eux; \
         | LC_ALL=C sort \
         | while IFS= read -r certificate; do sed -e '$a\' "${certificate}"; done \
         > /snapshot-ca-certificates.crt; \
-    test -s /snapshot-ca-certificates.crt
+    test -s /snapshot-ca-certificates.crt; \
+    case "${SOURCE_DATE_EPOCH}" in ''|*[!0-9]*) exit 64 ;; esac; \
+    touch --no-dereference --date="@${SOURCE_DATE_EPOCH}" /snapshot-ca-certificates.crt
 
 FROM ${UBUNTU_IMAGE}
 
 # Modified by PastureStack contributors for independent maintenance and rebranding.
 
+ARG SOURCE_DATE_EPOCH
+
 COPY --from=snapshot-ca-bootstrap /snapshot-ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 COPY ubuntu-apt.lock /usr/share/pasturestack/manifests/ubuntu-apt.lock
 COPY toolchain/buildx-security.patch /usr/share/pasturestack/patches/buildx-security.patch
+
+RUN set -eux; \
+    case "${SOURCE_DATE_EPOCH}" in ''|*[!0-9]*) exit 64 ;; esac; \
+    test "${SOURCE_DATE_EPOCH}" -le "$(date -u +%s)"; \
+    touch --no-dereference --date="@${SOURCE_DATE_EPOCH}" \
+        /etc/ssl/certs/ca-certificates.crt \
+        /usr/share/pasturestack/manifests/ubuntu-apt.lock \
+        /usr/share/pasturestack/patches/buildx-security.patch
 
 ARG DAPPER_HOST_ARCH=amd64
 ARG GO_VERSION=1.26.6
@@ -83,6 +97,8 @@ RUN set -eux; \
         printf 'metadata\tubuntu_snapshot\t-\t%s\n' "${UBUNTU_APT_SNAPSHOT}"; \
         dpkg-query -W -f='package\t${binary:Package}\t${Architecture}\t${Version}\n' | LC_ALL=C sort; \
     } > /usr/share/pasturestack/manifests/dapper-ubuntu-packages.tsv; \
+    touch --no-dereference --date="@${SOURCE_DATE_EPOCH}" \
+        /usr/share/pasturestack/manifests/dapper-ubuntu-packages.tsv; \
     apt-get clean; \
     rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/* /tmp/* /var/tmp/*; \
     rm -f /var/log/apt/* /var/log/dpkg.log /var/log/alternatives.log /var/cache/ldconfig/aux-cache; \
@@ -145,6 +161,10 @@ RUN set -eux; \
             "${docker_compiler#go}" "${DAPPER_HOST_ARCH}" "$(sha256sum /usr/bin/docker | awk '{ print $1 }')" "$(docker --version)" \
             '-mod=mod -trimpath -buildvcs=false -tags=grpcnotrace,osusergo,netgo -ldflags=-s,-w,-buildid='; \
     } > /usr/share/pasturestack/manifests/docker-cli-build.tsv; \
+    touch --no-dereference --date="@${SOURCE_DATE_EPOCH}" \
+        /usr/bin/docker \
+        /usr/share/pasturestack/manifests/docker-cli-build.tsv \
+        /usr/share/pasturestack/manifests/docker-cli-go-version.txt; \
     rm -rf /tmp/docker-cli-src /tmp/docker-cli.tar.gz /tmp/docker-go-mod /tmp/go-build-cache
 
 RUN set -eux; \
@@ -174,6 +194,9 @@ RUN set -eux; \
         echo 'patched Buildx binary still records github.com/docker/docker' >&2; \
         exit 1; \
     fi; \
+    touch --no-dereference --date="@${SOURCE_DATE_EPOCH}" \
+        /usr/libexec/docker/cli-plugins/docker-buildx \
+        /usr/share/pasturestack/manifests/buildx-go-version.txt; \
     rm -rf /tmp/buildx-src /tmp/buildx.tar.gz /tmp/buildx-deps.txt /tmp/go-build-cache
 
 RUN set -eux; \
@@ -191,7 +214,9 @@ RUN set -eux; \
         printf 'buildx\t%s\tlinux-%s\t%s\t%s\n' \
             "${BUILDX_VERSION}" "${DAPPER_HOST_ARCH}" \
             "$(sha256sum /usr/libexec/docker/cli-plugins/docker-buildx | awk '{ print $1 }')" "$(docker buildx version)"; \
-    } > /usr/share/pasturestack/manifests/dapper-toolchain.tsv
+    } > /usr/share/pasturestack/manifests/dapper-toolchain.tsv; \
+    touch --no-dereference --date="@${SOURCE_DATE_EPOCH}" \
+        /usr/share/pasturestack/manifests/dapper-toolchain.tsv
 
 ENV DAPPER_SOURCE=/go/src/github.com/PastureStack/ecr-credential-sync/
 ENV DAPPER_OUTPUT="./bin ./dist"
@@ -200,7 +225,9 @@ ENV DAPPER_ENV="TAG REPO IMAGE_NAMESPACE VERSION_OVERRIDE CROSS WINDOWS_DOCKER_H
 ENV HOME=${DAPPER_SOURCE}
 WORKDIR ${DAPPER_SOURCE}
 
-RUN git config --system --add safe.directory ${DAPPER_SOURCE}
+RUN set -eux; \
+    git config --system --add safe.directory ${DAPPER_SOURCE}; \
+    touch --no-dereference --date="@${SOURCE_DATE_EPOCH}" /etc/gitconfig
 
 ENTRYPOINT ["./scripts/entry"]
 CMD ["ci"]

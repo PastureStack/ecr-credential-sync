@@ -81,6 +81,21 @@ require_marker .github/workflows/supply-chain.yml 'test("^(go|v)?1\\.26\\.6$")' 
 require_marker .github/workflows/supply-chain.yml 'dapper_unreviewed_critical_high' ECR_SYNC_DAPPER_HIGH_GATE_MISSING
 require_marker README.md 'compiles Docker CLI 29.7.2 from its checksum- and' ECR_SYNC_DOCKER_SOURCE_BUILD_DOC_MISSING
 reject_marker Dockerfile.dapper 'ARG UBUNTU_MIRROR=' ECR_SYNC_ROLLING_APT_MIRROR_PRESENT
+require_marker Makefile 'DAPPER_SOURCE_DATE_EPOCH ?= $(shell git show -s --format=%ct HEAD)' ECR_SYNC_DAPPER_SOURCE_EPOCH_DERIVATION_MISSING
+require_marker Makefile 'SOURCE_DATE_EPOCH=$(DAPPER_SOURCE_DATE_EPOCH) docker buildx build' ECR_SYNC_DAPPER_BUILDX_BUILD_MISSING
+require_marker Makefile '--output "type=docker,name=$(DAPPER_IMAGE),rewrite-timestamp=true,compatibility-version=20"' ECR_SYNC_DAPPER_REPRODUCIBLE_EXPORT_MISSING
+require_marker Makefile '--build-arg SOURCE_DATE_EPOCH=$(DAPPER_SOURCE_DATE_EPOCH)' ECR_SYNC_DAPPER_SOURCE_EPOCH_BUILD_ARG_MISSING
+require_marker Makefile 'bash ./scripts/normalize-runtime-context-mtimes' ECR_SYNC_DAPPER_CONTEXT_MTIME_NORMALIZER_MISSING
+require_marker Dockerfile.dapper 'ARG SOURCE_DATE_EPOCH' ECR_SYNC_DAPPER_DOCKERFILE_SOURCE_EPOCH_MISSING
+require_marker Dockerfile.dapper 'touch --no-dereference --date="@${SOURCE_DATE_EPOCH}" /snapshot-ca-certificates.crt' ECR_SYNC_DAPPER_CA_MTIME_NORMALIZATION_MISSING
+require_marker .github/workflows/supply-chain.yml 'docker buildx create --driver docker-container --name "$first_dapper_builder"' ECR_SYNC_DAPPER_ISOLATED_FIRST_BUILD_MISSING
+require_marker .github/workflows/supply-chain.yml 'docker buildx create --driver docker-container --name "$second_dapper_builder"' ECR_SYNC_DAPPER_ISOLATED_SECOND_BUILD_MISSING
+require_marker .github/workflows/supply-chain.yml 'DAPPER_NO_CACHE=true' ECR_SYNC_DAPPER_NO_CACHE_PROOF_MISSING
+require_marker .github/workflows/supply-chain.yml '."containerimage.config.digest"' ECR_SYNC_DAPPER_CONFIG_DIGEST_GATE_MISSING
+require_marker .github/workflows/supply-chain.yml 'test "$(cat "evidence/${prefix}-created.txt")" = "$expected_dapper_created"' ECR_SYNC_DAPPER_CREATED_EPOCH_GATE_MISSING
+require_marker .github/workflows/supply-chain.yml 'invalid or empty Dapper RootFS DiffID list' ECR_SYNC_DAPPER_ROOTFS_DIFFID_GATE_MISSING
+require_marker .github/workflows/supply-chain.yml '"evidence/dapper-first-${artifact}"' ECR_SYNC_DAPPER_FIRST_ARTIFACT_COMPARISON_MISSING
+require_marker .github/workflows/supply-chain.yml '"evidence/dapper-second-${artifact}"' ECR_SYNC_DAPPER_SECOND_ARTIFACT_COMPARISON_MISSING
 require_marker package/Dockerfile 'USER 10001:10001' ECR_SYNC_RUNTIME_NOT_NON_ROOT
 require_marker package/Dockerfile 'COPY --chown=0:0 --chmod=0444 ubuntu-apt.lock /usr/share/pasturestack/manifests/ubuntu-apt.lock' ECR_SYNC_RUNTIME_LOCK_MODE_NOT_EXPLICIT
 require_marker package/Dockerfile 'chmod 0755 /usr/share/pasturestack /usr/share/pasturestack/manifests' ECR_SYNC_RUNTIME_MANIFEST_DIRECTORY_MODE_MISSING
@@ -170,6 +185,28 @@ EOF
   fi
 ); then
   printf 'ECR_SYNC_RUNTIME_MTIME_NORMALIZATION_CONTRACT_INVALID\n' >&2
+  failure_count=$((failure_count + 1))
+fi
+
+if ! (
+  set -euo pipefail
+  dapper_recipe=$(
+    make --no-print-directory -n dapper-image \
+      DAPPER_IMAGE=fixture/dapper:contract \
+      DAPPER_BUILDER=fixture-builder \
+      DAPPER_METADATA_FILE=/tmp/dapper-fixture-metadata.json \
+      DAPPER_NO_CACHE=true \
+      DAPPER_SOURCE_DATE_EPOCH=946684800
+  )
+  grep -F 'normalize-runtime-context-mtimes Dockerfile.dapper . 946684800' <<<"$dapper_recipe" >/dev/null
+  grep -F 'SOURCE_DATE_EPOCH=946684800 docker buildx build' <<<"$dapper_recipe" >/dev/null
+  grep -F -- '--builder fixture-builder' <<<"$dapper_recipe" >/dev/null
+  grep -F -- '--no-cache' <<<"$dapper_recipe" >/dev/null
+  grep -F -- '--metadata-file /tmp/dapper-fixture-metadata.json' <<<"$dapper_recipe" >/dev/null
+  grep -F -- '--output "type=docker,name=fixture/dapper:contract,rewrite-timestamp=true,compatibility-version=20"' <<<"$dapper_recipe" >/dev/null
+  grep -F -- '--build-arg SOURCE_DATE_EPOCH=946684800' <<<"$dapper_recipe" >/dev/null
+); then
+  printf 'ECR_SYNC_DAPPER_REPRODUCIBLE_BUILD_CONTRACT_INVALID\n' >&2
   failure_count=$((failure_count + 1))
 fi
 
@@ -352,5 +389,5 @@ if [ "$failure_count" -ne 0 ]; then
   exit 1
 fi
 
-printf 'ECR_SYNC_SOURCE_GATES_OK go=1.26.6 docker=29.7.2 docker_cli_source_built=go1.26.6 buildx=0.36.1 ubuntu=26.04 snapshot=20260808T000000Z non_root=1 legal_files=%s endpoint_override=bounded brand_gate=tracked_source_only runtime_manifest_access=default-user-read-only buildx_legacy_module_removed=1 runtime_mtime_normalization=all_local_copy_inputs sbom_trivy_gate=1\n' \
+printf 'ECR_SYNC_SOURCE_GATES_OK go=1.26.6 docker=29.7.2 docker_cli_source_built=go1.26.6 buildx=0.36.1 ubuntu=26.04 snapshot=20260808T000000Z non_root=1 legal_files=%s endpoint_override=bounded brand_gate=tracked_source_only runtime_manifest_access=default-user-read-only buildx_legacy_module_removed=1 runtime_mtime_normalization=all_local_copy_inputs dapper_reproducibility=buildkit-rewrite-timestamp sbom_trivy_gate=1\n' \
   "$legal_count"
