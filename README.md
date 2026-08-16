@@ -83,9 +83,11 @@ only in internal validation evidence.
 ## Local build and test
 
 The project uses a containerized Go 1.26.6 build environment with vendored
-dependencies. The build image locks Docker CLI 29.7.2 and Buildx 0.36.1. A
-checksum-locked Buildx patch removes its sole compiled dependency on the legacy
-Docker module. The Ubuntu 26.04 base image is digest-pinned, and all direct APT
+dependencies. The build image compiles Docker CLI 29.7.2 from its checksum- and
+commit-locked official source with Go 1.26.6, and records both the binary hash
+and embedded Go build information. It also locks Buildx 0.36.1. A checksum-locked
+Buildx patch removes its sole compiled dependency on the legacy Docker module.
+The Ubuntu 26.04 base image is digest-pinned, and all direct APT
 packages are locked to the official `20260808T000000Z` Ubuntu snapshot. Each
 image records its resolved
 `dpkg` inventory, and the build image records the installed GCC, Go, Docker,

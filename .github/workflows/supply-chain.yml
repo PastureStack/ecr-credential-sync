@@ -152,6 +152,35 @@ jobs:
           grep -F $'docker\t29.7.2\tlinux-amd64\t' evidence/dapper-toolchain.tsv >/dev/null
           grep -F $'buildx\t0.36.1\tlinux-amd64\t' evidence/dapper-toolchain.tsv >/dev/null
           docker run --rm --entrypoint cat "$DAPPER_IMAGE" \
+            /usr/share/pasturestack/manifests/docker-cli-build.tsv \
+            > evidence/docker-cli-build.tsv
+          awk -F '\t' '
+            NR == 1 {
+              if ($0 != "component\tdeclared_version\tsource_uri\tsource_commit\tsource_sha256\tsource_date_epoch\tcompiler\ttarget\tinstalled_sha256\tinstalled_version\tbuild_flags") {
+                exit 1
+              }
+              next
+            }
+            NR == 2 {
+              if ($1 != "docker-cli" || $2 != "29.7.2" ||
+                  $3 != "https://codeload.github.com/docker/cli/tar.gz/a7dcaa6fdb6ed04aacbfdc76357fdae01605609e" ||
+                  $4 != "a7dcaa6fdb6ed04aacbfdc76357fdae01605609e" ||
+                  $5 != "6e5c91d3a5a79db78cf989d07727d00e757aa0da4d135a3ce4b86061b83fb511" ||
+                  $6 != "1785922455" || $7 != "go1.26.6" || $8 != "linux-amd64" ||
+                  $9 !~ /^[0-9a-f]{64}$/ || $10 == "" ||
+                  $11 != "-mod=mod -trimpath -buildvcs=false -tags=grpcnotrace,osusergo,netgo -ldflags=-s,-w,-buildid=") {
+                exit 1
+              }
+            }
+            END { if (NR != 2) exit 1 }
+          ' evidence/docker-cli-build.tsv
+          docker run --rm --entrypoint cat "$DAPPER_IMAGE" \
+            /usr/share/pasturestack/manifests/docker-cli-go-version.txt \
+            > evidence/docker-cli-go-version.txt
+          test "$(awk 'NR == 1 { print $NF }' evidence/docker-cli-go-version.txt)" = 'go1.26.6'
+          grep -F $'dep\tgolang.org/x/text\tv0.40.0\t' evidence/docker-cli-go-version.txt >/dev/null
+          grep -F $'dep\tgoogle.golang.org/grpc\tv1.82.1\t' evidence/docker-cli-go-version.txt >/dev/null
+          docker run --rm --entrypoint cat "$DAPPER_IMAGE" \
             /usr/share/pasturestack/manifests/buildx-go-version.txt \
             > evidence/buildx-go-version.txt
           docker run --rm --entrypoint cat "$DAPPER_IMAGE" \
@@ -250,6 +279,18 @@ jobs:
             "$TRIVY_IMAGE" image \
             --skip-db-update --offline-scan --format cyclonedx \
             --output /evidence/runtime.cdx.json "$RUNTIME_IMAGE"
+          jq -e '
+            [.components[]?
+              | select(.name == "stdlib")
+              | select((.version // "") | test("^(go|v)?1\\.26\\.6$"))
+            ] | length >= 1
+          ' evidence/dapper.cdx.json >/dev/null
+          jq -e '
+            [.components[]?
+              | select(.name == "stdlib")
+              | select((.version // "") | test("^(go|v)?1\\.26\\.5$"))
+            ] | length == 0
+          ' evidence/dapper.cdx.json >/dev/null
 
       - name: Enforce source, builder, and runtime security policy
         shell: bash
