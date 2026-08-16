@@ -1,0 +1,153 @@
+#!/bin/bash
+set -euo pipefail
+
+repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+fixture_root=$(mktemp -d)
+case "$fixture_root" in
+  /tmp/*|/var/tmp/*) ;;
+  *) exit 1 ;;
+esac
+trap 'rm -rf -- "$fixture_root"' EXIT
+
+create_case() {
+  local name=$1
+  local reported_version=$2
+  case_root="${fixture_root}/${name}"
+  fixture_repo="${case_root}/repository"
+  fixture_bin="${case_root}/fake-bin"
+  fixture_destination="${case_root}/destination"
+  fixture_payload="${case_root}/docker-buildx.fixture"
+  fixture_checksums="${case_root}/checksums.fixture"
+  fixture_installer="${fixture_repo}/scripts/install-locked-host-buildx"
+
+  mkdir -p "$fixture_repo/scripts" "$fixture_repo/toolchain" \
+    "$fixture_bin" "$fixture_destination"
+  cp "$repo_root/scripts/install-locked-host-buildx" "$fixture_installer"
+  cp "$repo_root/toolchain/host-build-toolchain.lock" \
+    "$fixture_repo/toolchain/host-build-toolchain.lock"
+
+  cat > "$fixture_payload" <<EOF
+#!/bin/sh
+if [ "\$#" -eq 1 ] && [ "\$1" = version ]; then
+  printf '%s\n' 'github.com/docker/buildx ${reported_version} 1d8dde89b8aba914e05e45366770736fea1fd690'
+  exit 0
+fi
+exit 64
+EOF
+  chmod 0700 "$fixture_payload"
+  fixture_asset_sha=$(sha256sum -- "$fixture_payload")
+  fixture_asset_sha=${fixture_asset_sha%% *}
+  printf '%s *%s\n' "$fixture_asset_sha" 'buildx-v0.36.1.linux-amd64' \
+    > "$fixture_checksums"
+  fixture_checksums_sha=$(sha256sum -- "$fixture_checksums")
+  fixture_checksums_sha=${fixture_checksums_sha%% *}
+  sed -i \
+    -e "s/^HOST_BUILDX_ASSET_SHA256=.*/HOST_BUILDX_ASSET_SHA256=${fixture_asset_sha}/" \
+    -e "s/^HOST_BUILDX_CHECKSUMS_SHA256=.*/HOST_BUILDX_CHECKSUMS_SHA256=${fixture_checksums_sha}/" \
+    "$fixture_repo/toolchain/host-build-toolchain.lock"
+
+  cat > "$fixture_bin/curl" <<'EOF'
+#!/bin/bash
+set -euo pipefail
+if [ "${FIXTURE_DOWNLOAD_FAIL:-0}" = 1 ]; then
+  exit 22
+fi
+output=
+url=
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --output)
+      output=$2
+      shift 2
+      ;;
+    --proto|--proto-redir)
+      shift 2
+      ;;
+    --fail|--show-error|--silent|--location|--tlsv1.2)
+      shift
+      ;;
+    *)
+      url=$1
+      shift
+      ;;
+  esac
+done
+[ -n "$output" ] && [ -n "$url" ]
+case "$url" in
+  */checksums.txt) cp -- "$FIXTURE_CHECKSUMS" "$output" ;;
+  */buildx-v0.36.1.linux-amd64) cp -- "$FIXTURE_BINARY" "$output" ;;
+  *) exit 22 ;;
+esac
+EOF
+  chmod 0700 "$fixture_bin/curl" "$fixture_installer"
+}
+
+run_installer() {
+  PATH="${fixture_bin}:${PATH}" \
+    HOME="${FIXTURE_HOME_OVERRIDE:-${HOME:-}}" \
+    FIXTURE_BINARY="$fixture_payload" \
+    FIXTURE_CHECKSUMS="$fixture_checksums" \
+    FIXTURE_DOWNLOAD_FAIL="${FIXTURE_DOWNLOAD_FAIL:-0}" \
+    bash "$fixture_installer" "$fixture_destination"
+}
+
+run_installer_download_failure() {
+  FIXTURE_DOWNLOAD_FAIL=1 run_installer
+}
+
+run_installer_global_plugin() {
+  FIXTURE_HOME_OVERRIDE="$fixture_home" run_installer
+}
+
+expect_failure() {
+  local name=$1
+  local expected_reason=$2
+  shift 2
+  if "$@" >"${case_root}/${name}.stdout" 2>"${case_root}/${name}.stderr"; then
+    printf 'expected locked host Buildx fixture to fail: %s\n' "$name" >&2
+    exit 1
+  fi
+  grep -F "reason=${expected_reason}" "${case_root}/${name}.stderr" >/dev/null
+}
+
+create_case success v0.36.1
+installed_path=$(run_installer 2>"${case_root}/success.stderr")
+test "$installed_path" = "${fixture_destination}/bin/docker-buildx"
+test -x "$installed_path"
+test "$(stat -c '%a' "$installed_path")" = 555
+test "$("$installed_path" version)" = \
+  'github.com/docker/buildx v0.36.1 1d8dde89b8aba914e05e45366770736fea1fd690'
+
+create_case hash-mismatch v0.36.1
+printf '\n' >> "$fixture_payload"
+expect_failure hash-mismatch asset-sha256-mismatch run_installer
+
+create_case version-mismatch v0.35.0
+expect_failure version-mismatch version-readback-version-mismatch run_installer
+
+create_case existing-destination v0.36.1
+printf 'occupied\n' > "${fixture_destination}/existing"
+expect_failure existing-destination destination-root-not-empty run_installer
+
+create_case symlink-destination v0.36.1
+real_destination="${case_root}/real-destination"
+mv "$fixture_destination" "$real_destination"
+ln -s "$real_destination" "$fixture_destination"
+expect_failure symlink-destination destination-root-is-symlink run_installer
+
+create_case writable-destination v0.36.1
+chmod 0770 "$fixture_destination"
+expect_failure writable-destination destination-root-group-or-world-writable run_installer
+
+create_case global-plugin-destination v0.36.1
+fixture_home="${case_root}/home"
+fixture_destination="${fixture_home}/.docker/cli-plugins"
+mkdir -p "$fixture_destination"
+expect_failure global-plugin-destination destination-root-is-global-docker-config \
+  run_installer_global_plugin
+
+create_case download-failure v0.36.1
+expect_failure download-failure checksums-download-failed \
+  run_installer_download_failure
+
+printf 'ECR_SYNC_LOCKED_HOST_BUILDX_FIXTURES_OK positive=1 negative=7\n'

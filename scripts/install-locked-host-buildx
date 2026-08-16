@@ -1,0 +1,146 @@
+#!/bin/bash
+set -euo pipefail
+
+if [ "$#" -ne 1 ]; then
+  printf 'usage: %s EMPTY_CANONICAL_DESTINATION_ROOT\n' "$0" >&2
+  exit 64
+fi
+
+repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+lock_file="${repo_root}/toolchain/host-build-toolchain.lock"
+destination_root=$1
+digest_pattern='^[0-9a-f]{64}$'
+
+fail() {
+  printf 'ECR_SYNC_LOCKED_HOST_BUILDX_INVALID reason=%s\n' "$1" >&2
+  exit 1
+}
+
+[ -f "$lock_file" ] || fail missing-host-build-toolchain-lock
+# shellcheck disable=SC1090
+source "$lock_file"
+
+required_lock_keys=(
+  HOST_BUILDX_VERSION
+  HOST_BUILDX_COMMIT
+  HOST_BUILDX_ASSET_PLATFORM
+  HOST_BUILDX_ASSET_FILENAME
+  HOST_BUILDX_ASSET_URL
+  HOST_BUILDX_ASSET_SHA256
+  HOST_BUILDX_CHECKSUMS_FILENAME
+  HOST_BUILDX_CHECKSUMS_URL
+  HOST_BUILDX_CHECKSUMS_SHA256
+)
+for lock_key in "${required_lock_keys[@]}"; do
+  [ -n "${!lock_key-}" ] || fail "missing-lock-key:${lock_key}"
+done
+
+[ "$HOST_BUILDX_ASSET_PLATFORM" = linux-amd64 ] || fail unsupported-platform
+[ "$HOST_BUILDX_ASSET_FILENAME" = "buildx-${HOST_BUILDX_VERSION}.linux-amd64" ] || \
+  fail asset-filename-version-mismatch
+[ "$HOST_BUILDX_CHECKSUMS_FILENAME" = checksums.txt ] || fail checksums-filename-mismatch
+expected_asset_url="https://github.com/docker/buildx/releases/download/${HOST_BUILDX_VERSION}/${HOST_BUILDX_ASSET_FILENAME}"
+expected_checksums_url="https://github.com/docker/buildx/releases/download/${HOST_BUILDX_VERSION}/${HOST_BUILDX_CHECKSUMS_FILENAME}"
+[ "$HOST_BUILDX_ASSET_URL" = "$expected_asset_url" ] || fail asset-url-not-exact
+[ "$HOST_BUILDX_CHECKSUMS_URL" = "$expected_checksums_url" ] || fail checksums-url-not-exact
+[[ "$HOST_BUILDX_ASSET_SHA256" =~ $digest_pattern ]] || fail malformed-asset-sha256
+[[ "$HOST_BUILDX_CHECKSUMS_SHA256" =~ $digest_pattern ]] || fail malformed-checksums-sha256
+
+[[ "$destination_root" == /* ]] || fail destination-root-not-absolute
+[ "$destination_root" != / ] || fail destination-root-too-broad
+[ "${destination_root%/}" = "$destination_root" ] || fail destination-root-has-trailing-slash
+[ -d "$destination_root" ] || fail destination-root-missing
+[ ! -L "$destination_root" ] || fail destination-root-is-symlink
+canonical_root=$(realpath -e -- "$destination_root")
+[ "$canonical_root" = "$destination_root" ] || fail destination-root-not-canonical
+[ -O "$destination_root" ] || fail destination-root-not-owned-by-caller
+if find "$canonical_root" -maxdepth 0 -perm /022 -print -quit | grep -q .; then
+  fail destination-root-group-or-world-writable
+fi
+case "$canonical_root" in
+  /bin|/bin/*|/boot|/boot/*|/etc|/etc/*|/lib|/lib/*|/lib64|/lib64/*|/opt|/opt/*|/sbin|/sbin/*|/usr|/usr/*|/var/lib/docker|/var/lib/docker/*)
+    fail destination-root-is-system-location
+    ;;
+esac
+if [ -n "${HOME:-}" ] && [ -d "$HOME" ]; then
+  canonical_home=$(realpath -e -- "$HOME")
+  case "$canonical_root" in
+    "$canonical_home/.docker"|"$canonical_home/.docker/"*)
+      fail destination-root-is-global-docker-config
+      ;;
+  esac
+fi
+if find "$canonical_root" -mindepth 1 -maxdepth 1 -print -quit | grep -q .; then
+  fail destination-root-not-empty
+fi
+
+for required_command in awk chmod curl find grep mkdir mktemp mv realpath rm rmdir sha256sum wc; do
+  command -v "$required_command" >/dev/null || fail "missing-command:${required_command}"
+done
+
+asset_download=$(mktemp "${canonical_root}/.buildx-asset.XXXXXX")
+checksums_download=$(mktemp "${canonical_root}/.buildx-checksums.XXXXXX")
+bin_dir="${canonical_root}/bin"
+target="${bin_dir}/docker-buildx"
+completed=0
+
+cleanup() {
+  [ -z "$asset_download" ] || rm -f -- "$asset_download"
+  [ -z "$checksums_download" ] || rm -f -- "$checksums_download"
+  if [ "$completed" -ne 1 ]; then
+    rm -f -- "$target"
+    rmdir -- "$bin_dir" >/dev/null 2>&1 || :
+  fi
+}
+trap cleanup EXIT
+
+download_https() {
+  local url=$1
+  local output=$2
+  curl --fail --show-error --silent --location \
+    --proto '=https' --proto-redir '=https' --tlsv1.2 \
+    --output "$output" "$url"
+}
+
+download_https "$HOST_BUILDX_CHECKSUMS_URL" "$checksums_download" || fail checksums-download-failed
+actual_checksums_sha=$(sha256sum -- "$checksums_download")
+actual_checksums_sha=${actual_checksums_sha%% *}
+[ "$actual_checksums_sha" = "$HOST_BUILDX_CHECKSUMS_SHA256" ] || fail checksums-sha256-mismatch
+
+mapfile -t official_asset_hashes < <(
+  awk -v filename="*${HOST_BUILDX_ASSET_FILENAME}" '$2 == filename {print $1}' \
+    "$checksums_download"
+)
+[ "${#official_asset_hashes[@]}" -eq 1 ] || fail official-asset-checksum-count-invalid
+[[ "${official_asset_hashes[0]}" =~ $digest_pattern ]] || fail official-asset-checksum-malformed
+[ "${official_asset_hashes[0]}" = "$HOST_BUILDX_ASSET_SHA256" ] || \
+  fail official-and-locked-asset-sha256-mismatch
+
+download_https "$HOST_BUILDX_ASSET_URL" "$asset_download" || fail asset-download-failed
+actual_asset_sha=$(sha256sum -- "$asset_download")
+actual_asset_sha=${actual_asset_sha%% *}
+[ "$actual_asset_sha" = "$HOST_BUILDX_ASSET_SHA256" ] || fail asset-sha256-mismatch
+
+chmod 0500 "$asset_download"
+version_output=$("$asset_download" version) || fail version-readback-failed
+[ "$(printf '%s\n' "$version_output" | wc -l)" -eq 1 ] || fail version-readback-line-count-invalid
+read -r buildx_module buildx_version buildx_commit buildx_extra <<<"$version_output"
+[ "$buildx_module" = github.com/docker/buildx ] || fail version-readback-module-mismatch
+[ "$buildx_version" = "$HOST_BUILDX_VERSION" ] || fail version-readback-version-mismatch
+[ "$buildx_commit" = "$HOST_BUILDX_COMMIT" ] || fail version-readback-commit-mismatch
+[ -z "${buildx_extra:-}" ] || fail version-readback-extra-fields
+
+[ ! -e "$bin_dir" ] && [ ! -L "$bin_dir" ] || fail destination-bin-already-exists
+mkdir -m 0700 -- "$bin_dir"
+[ ! -e "$target" ] && [ ! -L "$target" ] || fail destination-target-already-exists
+mv -- "$asset_download" "$target"
+asset_download=
+chmod 0555 "$target"
+[ "$("$target" version)" = "$version_output" ] || fail installed-version-readback-mismatch
+rm -f -- "$checksums_download"
+checksums_download=
+completed=1
+
+printf 'ECR_SYNC_LOCKED_HOST_BUILDX_OK version=%s commit=%s sha256=%s path=%s\n' \
+  "$buildx_version" "$buildx_commit" "$actual_asset_sha" "$target" >&2
+printf '%s\n' "$target"

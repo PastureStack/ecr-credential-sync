@@ -13,6 +13,13 @@ import uuid
 HOST_TOOLCHAIN_KEYS = (
     "HOST_BUILDX_VERSION",
     "HOST_BUILDX_COMMIT",
+    "HOST_BUILDX_ASSET_PLATFORM",
+    "HOST_BUILDX_ASSET_FILENAME",
+    "HOST_BUILDX_ASSET_URL",
+    "HOST_BUILDX_ASSET_SHA256",
+    "HOST_BUILDX_CHECKSUMS_FILENAME",
+    "HOST_BUILDX_CHECKSUMS_URL",
+    "HOST_BUILDX_CHECKSUMS_SHA256",
     "HOST_BUILDKIT_VERSION",
     "HOST_BUILDKIT_IMAGE",
     "SETUP_BUILDX_ACTION_VERSION",
@@ -125,6 +132,34 @@ def main() -> int:
                 {
                     "name": "pasturestack:host-buildx-commit",
                     "value": host_toolchain["HOST_BUILDX_COMMIT"],
+                },
+                {
+                    "name": "pasturestack:host-buildx-asset-platform",
+                    "value": host_toolchain["HOST_BUILDX_ASSET_PLATFORM"],
+                },
+                {
+                    "name": "pasturestack:host-buildx-asset-filename",
+                    "value": host_toolchain["HOST_BUILDX_ASSET_FILENAME"],
+                },
+                {
+                    "name": "pasturestack:host-buildx-asset-url",
+                    "value": host_toolchain["HOST_BUILDX_ASSET_URL"],
+                },
+                {
+                    "name": "pasturestack:host-buildx-asset-sha256",
+                    "value": host_toolchain["HOST_BUILDX_ASSET_SHA256"],
+                },
+                {
+                    "name": "pasturestack:host-buildx-checksums-filename",
+                    "value": host_toolchain["HOST_BUILDX_CHECKSUMS_FILENAME"],
+                },
+                {
+                    "name": "pasturestack:host-buildx-checksums-url",
+                    "value": host_toolchain["HOST_BUILDX_CHECKSUMS_URL"],
+                },
+                {
+                    "name": "pasturestack:host-buildx-checksums-sha256",
+                    "value": host_toolchain["HOST_BUILDX_CHECKSUMS_SHA256"],
                 },
                 {
                     "name": "pasturestack:host-buildkit-version",

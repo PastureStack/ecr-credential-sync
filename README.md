@@ -93,10 +93,31 @@ The host build client is installed by
 `v0.32.2` from
 `moby/buildkit:v0.32.2@sha256:28a898719c18a33f4e8000685287fa36fd0dd9560c6440227d3a732d79bb41d8`.
 These host-side locks are recorded in `toolchain/host-build-toolchain.lock` and
-the source SBOM. The Ubuntu 26.04 base image is digest-pinned, and all direct
-APT packages are locked to the official `20260808T000000Z` Ubuntu snapshot.
-Each image records its resolved `dpkg` inventory, and the build image records
-the installed GCC, Go, Docker, and Buildx binaries.
+the source SBOM. The lock also binds the official Linux amd64 Buildx release
+asset (`sha256:48af8a397ebd60178778bf63611dbcebe5f5e7a9be90eb9147b24b9587455778`)
+and `checksums.txt`
+(`sha256:abeea7a52865e60e1af4995d2449cdbaca762dc99689a829f15f0fd760766413`)
+to their exact HTTPS URLs. The Ubuntu 26.04 base image is digest-pinned, and
+all direct APT packages are locked to the official `20260808T000000Z` Ubuntu
+snapshot. Each image records its resolved `dpkg` inventory, and the build image
+records the installed GCC, Go, Docker, and Buildx binaries.
+
+If a development packaging host does not already provide the locked Buildx,
+install the verified release binary only under an empty, caller-owned run root:
+
+```bash
+mkdir -m 0700 "$RUN_ROOT/locked-host-buildx"
+export DAPPER_BUILDX_COMMAND="$(bash scripts/install-locked-host-buildx "$RUN_ROOT/locked-host-buildx")"
+"$DAPPER_BUILDX_COMMAND" version
+```
+
+The helper verifies the official checksum file, binary hash, version, and
+commit before returning the executable path. It refuses existing, symlinked,
+non-canonical, system, and global Docker plugin destinations; it never writes
+to `/usr` or the user's Docker CLI plugin directory. GitHub Actions continues
+to use the commit-pinned setup action rather than this development fallback.
+The development packaging harness must use this exact command for builder
+create, inspect, and removal, and pass it to `make` with the pinned builder.
 
 ```bash
 VERSION_OVERRIDE=v3.1.0 ARCH=amd64 make build

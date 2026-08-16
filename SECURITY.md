@@ -46,6 +46,15 @@ the test suite never waits on production delays.
   (`v4.2.0`). Dapper builders use BuildKit `v0.32.2` from
   `moby/buildkit:v0.32.2@sha256:28a898719c18a33f4e8000685287fa36fd0dd9560c6440227d3a732d79bb41d8`.
   The source gate rejects mutable BuildKit fallbacks.
+- Development packaging may use `scripts/install-locked-host-buildx` only when
+  the host plugin does not match the lock. The helper downloads the exact
+  official Linux amd64 asset and checksum file over HTTPS, verifies both
+  SHA-256 digests (`48af8a397ebd60178778bf63611dbcebe5f5e7a9be90eb9147b24b9587455778`
+  and `abeea7a52865e60e1af4995d2449cdbaca762dc99689a829f15f0fd760766413`),
+  then verifies Buildx `v0.36.1` and commit
+  `1d8dde89b8aba914e05e45366770736fea1fd690`. It writes only below an empty,
+  canonical, caller-owned run root and never installs into a system directory
+  or global Docker CLI plugin directory.
 - Every Dapper export records its manifest digest separately. Its Buildx IID
   must be a valid configuration JSON digest and must equal the loaded Docker
   daemon image ID. Any non-null config digest emitted in Buildx metadata must

@@ -82,7 +82,8 @@ require_marker .github/workflows/supply-chain.yml 'dapper_unreviewed_critical_hi
 require_marker README.md 'compiles Docker CLI 29.7.2 from its checksum- and' ECR_SYNC_DOCKER_SOURCE_BUILD_DOC_MISSING
 reject_marker Dockerfile.dapper 'ARG UBUNTU_MIRROR=' ECR_SYNC_ROLLING_APT_MIRROR_PRESENT
 require_marker Makefile 'DAPPER_SOURCE_DATE_EPOCH ?= $(shell git show -s --format=%ct HEAD)' ECR_SYNC_DAPPER_SOURCE_EPOCH_DERIVATION_MISSING
-require_marker Makefile 'SOURCE_DATE_EPOCH=$(DAPPER_SOURCE_DATE_EPOCH) docker buildx build' ECR_SYNC_DAPPER_BUILDX_BUILD_MISSING
+require_marker Makefile 'DAPPER_BUILDX_COMMAND ?= docker buildx' ECR_SYNC_DAPPER_BUILDX_DEFAULT_COMMAND_MISSING
+require_marker Makefile 'SOURCE_DATE_EPOCH=$(DAPPER_SOURCE_DATE_EPOCH) $(DAPPER_BUILDX_COMMAND) build' ECR_SYNC_DAPPER_BUILDX_BUILD_MISSING
 require_marker Makefile 'DAPPER_IID_FILE ?=' ECR_SYNC_DAPPER_IID_OUTPUT_MISSING
 require_marker Makefile '--iidfile $(DAPPER_IID_FILE)' ECR_SYNC_DAPPER_IID_ARGUMENT_MISSING
 require_marker Makefile '--output "type=docker,name=$(DAPPER_IMAGE),rewrite-timestamp=true,compatibility-version=20"' ECR_SYNC_DAPPER_REPRODUCIBLE_EXPORT_MISSING
@@ -110,6 +111,24 @@ require_marker scripts/resolve-dapper-image-identity '$descriptor.annotations["c
 require_marker scripts/test-dapper-image-identity 'null-top-level.json' ECR_SYNC_DAPPER_NULL_METADATA_REGRESSION_MISSING
 require_marker scripts/test-dapper-image-identity 'iid-daemon-mismatch' ECR_SYNC_DAPPER_MISMATCH_REGRESSION_MISSING
 require_marker scripts/test-dapper-image-identity 'missing-manifest' ECR_SYNC_DAPPER_MANIFEST_REGRESSION_MISSING
+require_marker scripts/install-locked-host-buildx 'expected_asset_url="https://github.com/docker/buildx/releases/download/${HOST_BUILDX_VERSION}/${HOST_BUILDX_ASSET_FILENAME}"' ECR_SYNC_LOCKED_BUILDX_EXACT_URL_GATE_MISSING
+require_marker scripts/install-locked-host-buildx "--proto '=https' --proto-redir '=https' --tlsv1.2" ECR_SYNC_LOCKED_BUILDX_HTTPS_GATE_MISSING
+require_marker scripts/install-locked-host-buildx 'official-and-locked-asset-sha256-mismatch' ECR_SYNC_LOCKED_BUILDX_OFFICIAL_CHECKSUM_GATE_MISSING
+require_marker scripts/install-locked-host-buildx 'filename="*${HOST_BUILDX_ASSET_FILENAME}"' ECR_SYNC_LOCKED_BUILDX_CHECKSUM_FORMAT_GATE_MISSING
+require_marker scripts/install-locked-host-buildx 'asset-sha256-mismatch' ECR_SYNC_LOCKED_BUILDX_ASSET_HASH_GATE_MISSING
+require_marker scripts/install-locked-host-buildx 'version-readback-version-mismatch' ECR_SYNC_LOCKED_BUILDX_VERSION_GATE_MISSING
+require_marker scripts/install-locked-host-buildx 'version-readback-commit-mismatch' ECR_SYNC_LOCKED_BUILDX_COMMIT_GATE_MISSING
+require_marker scripts/install-locked-host-buildx 'destination-root-is-global-docker-config' ECR_SYNC_LOCKED_BUILDX_GLOBAL_INSTALL_REJECTION_MISSING
+require_marker scripts/install-locked-host-buildx 'destination-root-not-empty' ECR_SYNC_LOCKED_BUILDX_OVERWRITE_REJECTION_MISSING
+require_marker scripts/install-locked-host-buildx 'destination-root-group-or-world-writable' ECR_SYNC_LOCKED_BUILDX_WRITABLE_ROOT_REJECTION_MISSING
+require_marker scripts/install-locked-host-buildx 'chmod 0555 "$target"' ECR_SYNC_LOCKED_BUILDX_FINAL_MODE_MISSING
+require_marker scripts/test-install-locked-host-buildx 'hash-mismatch' ECR_SYNC_LOCKED_BUILDX_HASH_REGRESSION_MISSING
+require_marker scripts/test-install-locked-host-buildx 'version-mismatch' ECR_SYNC_LOCKED_BUILDX_VERSION_REGRESSION_MISSING
+require_marker scripts/test-install-locked-host-buildx 'existing-destination' ECR_SYNC_LOCKED_BUILDX_EXISTING_REGRESSION_MISSING
+require_marker scripts/test-install-locked-host-buildx 'symlink-destination' ECR_SYNC_LOCKED_BUILDX_SYMLINK_REGRESSION_MISSING
+require_marker scripts/test-install-locked-host-buildx 'writable-destination' ECR_SYNC_LOCKED_BUILDX_WRITABLE_ROOT_REGRESSION_MISSING
+require_marker scripts/test-install-locked-host-buildx 'global-plugin-destination' ECR_SYNC_LOCKED_BUILDX_GLOBAL_PLUGIN_REGRESSION_MISSING
+require_marker scripts/test-install-locked-host-buildx 'download-failure' ECR_SYNC_LOCKED_BUILDX_DOWNLOAD_REGRESSION_MISSING
 require_marker package/Dockerfile 'USER 10001:10001' ECR_SYNC_RUNTIME_NOT_NON_ROOT
 require_marker package/Dockerfile 'COPY --chown=0:0 --chmod=0444 ubuntu-apt.lock /usr/share/pasturestack/manifests/ubuntu-apt.lock' ECR_SYNC_RUNTIME_LOCK_MODE_NOT_EXPLICIT
 require_marker package/Dockerfile 'chmod 0755 /usr/share/pasturestack /usr/share/pasturestack/manifests' ECR_SYNC_RUNTIME_MANIFEST_DIRECTORY_MODE_MISSING
@@ -151,15 +170,22 @@ require_marker internal/platformapi/client.go 'endpoint := service.client.baseUR
 require_marker README.md 'ghcr.io/pasturestack/ecr-credential-sync:v3.1.0' ECR_SYNC_README_VERSION_TAG_MISSING
 
 if ! bash -n scripts/build scripts/check-source-gates scripts/ci scripts/entry \
-  scripts/normalize-runtime-context-mtimes scripts/package scripts/release \
+  scripts/install-locked-host-buildx scripts/normalize-runtime-context-mtimes \
+  scripts/package scripts/release \
   scripts/resolve-dapper-image-identity scripts/test \
-  scripts/test-dapper-image-identity scripts/validate scripts/version; then
+  scripts/test-dapper-image-identity scripts/test-install-locked-host-buildx \
+  scripts/validate scripts/version; then
   printf 'ECR_SYNC_SHELL_SYNTAX_INVALID\n' >&2
   failure_count=$((failure_count + 1))
 fi
 
 if ! bash scripts/test-dapper-image-identity; then
   printf 'ECR_SYNC_DAPPER_IMAGE_IDENTITY_FIXTURES_INVALID\n' >&2
+  failure_count=$((failure_count + 1))
+fi
+
+if ! bash scripts/test-install-locked-host-buildx; then
+  printf 'ECR_SYNC_LOCKED_HOST_BUILDX_FIXTURES_INVALID\n' >&2
   failure_count=$((failure_count + 1))
 fi
 
@@ -227,6 +253,14 @@ if ! (
   grep -F -- '--iidfile /tmp/dapper-fixture.iid' <<<"$dapper_recipe" >/dev/null
   grep -F -- '--output "type=docker,name=fixture/dapper:contract,rewrite-timestamp=true,compatibility-version=20"' <<<"$dapper_recipe" >/dev/null
   grep -F -- '--build-arg SOURCE_DATE_EPOCH=946684800' <<<"$dapper_recipe" >/dev/null
+  locked_dapper_recipe=$(
+    make --no-print-directory -n dapper-image \
+      DAPPER_IMAGE=fixture/dapper:contract \
+      DAPPER_BUILDX_COMMAND=/tmp/locked-host-buildx/bin/docker-buildx \
+      DAPPER_SOURCE_DATE_EPOCH=946684800
+  )
+  grep -F 'SOURCE_DATE_EPOCH=946684800 /tmp/locked-host-buildx/bin/docker-buildx build' \
+    <<<"$locked_dapper_recipe" >/dev/null
 ); then
   printf 'ECR_SYNC_DAPPER_REPRODUCIBLE_BUILD_CONTRACT_INVALID\n' >&2
   failure_count=$((failure_count + 1))
@@ -251,14 +285,21 @@ if ! (
 fi
 
 if ! (
-  set -euo pipefail
-  source toolchain/host-build-toolchain.lock
-  test "$HOST_BUILDX_VERSION" = 'v0.36.1'
-  test "$HOST_BUILDX_COMMIT" = '1d8dde89b8aba914e05e45366770736fea1fd690'
-  test "$HOST_BUILDKIT_VERSION" = 'v0.32.2'
-  test "$HOST_BUILDKIT_IMAGE" = 'moby/buildkit:v0.32.2@sha256:28a898719c18a33f4e8000685287fa36fd0dd9560c6440227d3a732d79bb41d8'
-  test "$SETUP_BUILDX_ACTION_VERSION" = 'v4.2.0'
-  test "$SETUP_BUILDX_ACTION_COMMIT" = 'bb05f3f5519dd87d3ba754cc423b652a5edd6d2c'
+  set -uo pipefail
+  source toolchain/host-build-toolchain.lock &&
+    test "${HOST_BUILDX_VERSION-}" = 'v0.36.1' &&
+    test "${HOST_BUILDX_COMMIT-}" = '1d8dde89b8aba914e05e45366770736fea1fd690' &&
+    test "${HOST_BUILDX_ASSET_PLATFORM-}" = 'linux-amd64' &&
+    test "${HOST_BUILDX_ASSET_FILENAME-}" = 'buildx-v0.36.1.linux-amd64' &&
+    test "${HOST_BUILDX_ASSET_URL-}" = 'https://github.com/docker/buildx/releases/download/v0.36.1/buildx-v0.36.1.linux-amd64' &&
+    test "${HOST_BUILDX_ASSET_SHA256-}" = '48af8a397ebd60178778bf63611dbcebe5f5e7a9be90eb9147b24b9587455778' &&
+    test "${HOST_BUILDX_CHECKSUMS_FILENAME-}" = 'checksums.txt' &&
+    test "${HOST_BUILDX_CHECKSUMS_URL-}" = 'https://github.com/docker/buildx/releases/download/v0.36.1/checksums.txt' &&
+    test "${HOST_BUILDX_CHECKSUMS_SHA256-}" = 'abeea7a52865e60e1af4995d2449cdbaca762dc99689a829f15f0fd760766413' &&
+    test "${HOST_BUILDKIT_VERSION-}" = 'v0.32.2' &&
+    test "${HOST_BUILDKIT_IMAGE-}" = 'moby/buildkit:v0.32.2@sha256:28a898719c18a33f4e8000685287fa36fd0dd9560c6440227d3a732d79bb41d8' &&
+    test "${SETUP_BUILDX_ACTION_VERSION-}" = 'v4.2.0' &&
+    test "${SETUP_BUILDX_ACTION_COMMIT-}" = 'bb05f3f5519dd87d3ba754cc423b652a5edd6d2c'
 ); then
   printf 'ECR_SYNC_HOST_BUILD_TOOLCHAIN_LOCK_INVALID\n' >&2
   failure_count=$((failure_count + 1))
@@ -289,9 +330,14 @@ require_marker .github/workflows/supply-chain.yml '--driver-opt "image=$DAPPER_B
 require_marker .github/workflows/supply-chain.yml 'test "$(cat "evidence/${prefix}-buildkit-version.txt")" = v0.32.2' ECR_SYNC_DAPPER_BUILDKIT_VERSION_GATE_MISSING
 require_marker .github/workflows/supply-chain.yml 'test "$(cat "evidence/${prefix}-buildkit-image.txt")" = "$DAPPER_BUILDKIT_IMAGE"' ECR_SYNC_DAPPER_BUILDKIT_IMAGE_GATE_MISSING
 require_marker .github/workflows/supply-chain.yml 'test "$buildx_commit" = 1d8dde89b8aba914e05e45366770736fea1fd690' ECR_SYNC_HOST_BUILDX_COMMIT_GATE_MISSING
+require_marker .github/workflows/supply-chain.yml 'scripts/install-locked-host-buildx' ECR_SYNC_LOCKED_BUILDX_SOURCE_EVIDENCE_MISSING
+require_marker .github/workflows/supply-chain.yml 'scripts/test-install-locked-host-buildx' ECR_SYNC_LOCKED_BUILDX_TEST_EVIDENCE_MISSING
 reject_marker .github/workflows/supply-chain.yml 'moby/buildkit:buildx-stable-1' ECR_SYNC_MUTABLE_BUILDKIT_STABLE_FALLBACK_PRESENT
 reject_marker .github/workflows/supply-chain.yml 'moby/buildkit:latest' ECR_SYNC_MUTABLE_BUILDKIT_LATEST_PRESENT
 reject_marker .github/workflows/supply-chain.yml 'docker/setup-buildx-action@v' ECR_SYNC_MUTABLE_BUILDX_ACTION_PRESENT
+reject_marker toolchain/host-build-toolchain.lock 'http://' ECR_SYNC_HOST_BUILDX_INSECURE_ASSET_URL_PRESENT
+reject_marker toolchain/host-build-toolchain.lock 'releases/latest' ECR_SYNC_HOST_BUILDX_MUTABLE_RELEASE_URL_PRESENT
+reject_marker toolchain/host-build-toolchain.lock '/latest/' ECR_SYNC_HOST_BUILDX_MUTABLE_ASSET_URL_PRESENT
 require_marker .github/workflows/supply-chain.yml 'retention-days: 30' ECR_SYNC_EVIDENCE_RETENTION_NOT_30_DAYS
 require_marker .github/workflows/supply-chain.yml 'runtime.cdx.json' ECR_SYNC_RUNTIME_SBOM_MISSING
 require_marker .github/workflows/supply-chain.yml 'dapper.cdx.json' ECR_SYNC_DAPPER_SBOM_MISSING
@@ -311,11 +357,20 @@ require_marker scripts/generate-source-sbom.py 'vendor lock contains no versione
 require_marker scripts/generate-source-sbom.py 'replace("\r\n", "\n")' ECR_SYNC_VENDOR_SBOM_LINE_ENDINGS_NOT_CANONICAL
 require_marker scripts/generate-source-sbom.py 'pasturestack:host-buildx-version' ECR_SYNC_SOURCE_SBOM_HOST_BUILDX_MISSING
 require_marker scripts/generate-source-sbom.py 'pasturestack:host-buildx-commit' ECR_SYNC_SOURCE_SBOM_HOST_BUILDX_COMMIT_MISSING
+require_marker scripts/generate-source-sbom.py 'pasturestack:host-buildx-asset-url' ECR_SYNC_SOURCE_SBOM_HOST_BUILDX_ASSET_URL_MISSING
+require_marker scripts/generate-source-sbom.py 'pasturestack:host-buildx-asset-sha256' ECR_SYNC_SOURCE_SBOM_HOST_BUILDX_ASSET_SHA_MISSING
+require_marker scripts/generate-source-sbom.py 'pasturestack:host-buildx-checksums-url' ECR_SYNC_SOURCE_SBOM_HOST_BUILDX_CHECKSUMS_URL_MISSING
+require_marker scripts/generate-source-sbom.py 'pasturestack:host-buildx-checksums-sha256' ECR_SYNC_SOURCE_SBOM_HOST_BUILDX_CHECKSUMS_SHA_MISSING
 require_marker scripts/generate-source-sbom.py 'pasturestack:host-buildkit-image' ECR_SYNC_SOURCE_SBOM_HOST_BUILDKIT_MISSING
 require_marker scripts/generate-source-sbom.py 'pasturestack:setup-buildx-action-commit' ECR_SYNC_SOURCE_SBOM_BUILDX_ACTION_MISSING
 require_marker README.md 'docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c' ECR_SYNC_HOST_BUILDX_DOC_MISSING
 require_marker README.md 'moby/buildkit:v0.32.2@sha256:28a898719c18a33f4e8000685287fa36fd0dd9560c6440227d3a732d79bb41d8' ECR_SYNC_HOST_BUILDKIT_DOC_MISSING
+require_marker README.md 'scripts/install-locked-host-buildx' ECR_SYNC_LOCKED_HOST_BUILDX_DOC_MISSING
+require_marker README.md '48af8a397ebd60178778bf63611dbcebe5f5e7a9be90eb9147b24b9587455778' ECR_SYNC_LOCKED_HOST_BUILDX_README_DIGEST_MISSING
+require_marker README.md 'abeea7a52865e60e1af4995d2449cdbaca762dc99689a829f15f0fd760766413' ECR_SYNC_LOCKED_HOST_BUILDX_CHECKSUMS_README_DIGEST_MISSING
 require_marker SECURITY.md 'Buildx IID' ECR_SYNC_DAPPER_IDENTITY_SECURITY_DOC_MISSING
+require_marker SECURITY.md '48af8a397ebd60178778bf63611dbcebe5f5e7a9be90eb9147b24b9587455778' ECR_SYNC_LOCKED_HOST_BUILDX_SECURITY_DIGEST_MISSING
+require_marker SECURITY.md 'abeea7a52865e60e1af4995d2449cdbaca762dc99689a829f15f0fd760766413' ECR_SYNC_LOCKED_HOST_BUILDX_CHECKSUMS_SECURITY_DIGEST_MISSING
 require_marker security/openvex.json '"status": "fixed"' ECR_SYNC_SOURCE_VEX_FIXED_STATUS_MISSING
 require_marker security/openvex.json '"status": "not_affected"' ECR_SYNC_SOURCE_VEX_NOT_AFFECTED_STATUS_MISSING
 require_marker security/openvex.json '"justification": "vulnerable_code_not_present"' ECR_SYNC_SOURCE_VEX_JUSTIFICATION_MISSING
@@ -446,5 +501,5 @@ if [ "$failure_count" -ne 0 ]; then
   exit 1
 fi
 
-printf 'ECR_SYNC_SOURCE_GATES_OK go=1.26.6 docker=29.7.2 docker_cli_source_built=go1.26.6 buildx=0.36.1 host_buildx=0.36.1 host_buildkit=0.32.2 dapper_identity=iid-daemon-metadata-cross-check ubuntu=26.04 snapshot=20260808T000000Z non_root=1 legal_files=%s endpoint_override=bounded brand_gate=tracked_source_only runtime_manifest_access=default-user-read-only buildx_legacy_module_removed=1 runtime_mtime_normalization=all_local_copy_inputs dapper_reproducibility=buildkit-rewrite-timestamp sbom_trivy_gate=1\n' \
+printf 'ECR_SYNC_SOURCE_GATES_OK go=1.26.6 docker=29.7.2 docker_cli_source_built=go1.26.6 buildx=0.36.1 host_buildx=0.36.1 host_buildx_binary=sha256:48af8a397ebd60178778bf63611dbcebe5f5e7a9be90eb9147b24b9587455778 host_buildkit=0.32.2 dapper_identity=iid-daemon-metadata-cross-check ubuntu=26.04 snapshot=20260808T000000Z non_root=1 legal_files=%s endpoint_override=bounded brand_gate=tracked_source_only runtime_manifest_access=default-user-read-only buildx_legacy_module_removed=1 runtime_mtime_normalization=all_local_copy_inputs dapper_reproducibility=buildkit-rewrite-timestamp sbom_trivy_gate=1\n' \
   "$legal_count"

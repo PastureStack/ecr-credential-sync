@@ -66,6 +66,7 @@ jobs:
             scripts/build \
             scripts/ci \
             scripts/entry \
+            scripts/install-locked-host-buildx \
             scripts/package \
             scripts/normalize-runtime-context-mtimes \
             scripts/resolve-dapper-image-identity \
@@ -73,6 +74,7 @@ jobs:
             scripts/generate-source-sbom.py \
             scripts/test \
             scripts/test-dapper-image-identity \
+            scripts/test-install-locked-host-buildx \
             scripts/validate \
             security/openvex.json \
             .github/workflows/supply-chain.yml \

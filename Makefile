@@ -7,6 +7,7 @@ DOCKER_VERSION ?= 29.7.2
 BUILDX_VERSION ?= 0.36.1
 UBUNTU_APT_SNAPSHOT ?= 20260808T000000Z
 DAPPER_SOURCE_DATE_EPOCH ?= $(shell git show -s --format=%ct HEAD)
+DAPPER_BUILDX_COMMAND ?= docker buildx
 DAPPER_BUILDER ?=
 DAPPER_METADATA_FILE ?=
 DAPPER_IID_FILE ?=
@@ -17,7 +18,7 @@ DAPPER_NO_CACHE ?= false
 dapper-image:
 	bash ./scripts/normalize-runtime-context-mtimes \
 		Dockerfile.dapper . $(DAPPER_SOURCE_DATE_EPOCH)
-	SOURCE_DATE_EPOCH=$(DAPPER_SOURCE_DATE_EPOCH) docker buildx build \
+	SOURCE_DATE_EPOCH=$(DAPPER_SOURCE_DATE_EPOCH) $(DAPPER_BUILDX_COMMAND) build \
 		$(if $(DAPPER_BUILDER),--builder $(DAPPER_BUILDER),) \
 		$(if $(filter true,$(DAPPER_NO_CACHE)),--no-cache,) \
 		$(if $(DAPPER_METADATA_FILE),--metadata-file $(DAPPER_METADATA_FILE),) \
