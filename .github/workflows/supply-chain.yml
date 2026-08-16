@@ -23,6 +23,7 @@ jobs:
     timeout-minutes: 90
     env:
       DAPPER_IMAGE: local/ecr-credential-sync-dapper:${{ github.sha }}
+      DAPPER_BUILDKIT_IMAGE: moby/buildkit:v0.32.2@sha256:28a898719c18a33f4e8000685287fa36fd0dd9560c6440227d3a732d79bb41d8
       VERSION_OVERRIDE: v3.1.0
       TRIVY_IMAGE: aquasec/trivy:0.74.0@sha256:62b1e65e8869bc4b4c6aa4fa2b21595256c7c2f6018a9d9ad61caf87187c1969
 
@@ -33,6 +34,17 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Set up pinned host Buildx and BuildKit
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+        with:
+          version: v0.36.1
+          driver: docker-container
+          driver-opts: |
+            image=moby/buildkit:v0.32.2@sha256:28a898719c18a33f4e8000685287fa36fd0dd9560c6440227d3a732d79bb41d8
+            network=host
+          use: false
+          cache-binary: false
+
       - name: Record immutable source inputs
         shell: bash
         run: |
@@ -42,24 +54,44 @@ jobs:
           git rev-parse HEAD > evidence/source-revision.txt
           sha256sum \
             .dockerignore \
+            README.md \
+            SECURITY.md \
             ubuntu-apt.lock \
             Dockerfile.dapper \
             Makefile \
             package/Dockerfile \
             package/windows/amd64/Dockerfile \
             toolchain/buildx-security.patch \
+            toolchain/host-build-toolchain.lock \
             scripts/build \
             scripts/ci \
             scripts/entry \
             scripts/package \
             scripts/normalize-runtime-context-mtimes \
+            scripts/resolve-dapper-image-identity \
             scripts/check-source-gates \
             scripts/generate-source-sbom.py \
             scripts/test \
+            scripts/test-dapper-image-identity \
             scripts/validate \
             security/openvex.json \
             .github/workflows/supply-chain.yml \
             > evidence/source-inputs.sha256
+          source toolchain/host-build-toolchain.lock
+          test "$HOST_BUILDX_VERSION" = v0.36.1
+          test "$HOST_BUILDX_COMMIT" = 1d8dde89b8aba914e05e45366770736fea1fd690
+          test "$HOST_BUILDKIT_VERSION" = v0.32.2
+          test "$HOST_BUILDKIT_IMAGE" = "$DAPPER_BUILDKIT_IMAGE"
+          test "$SETUP_BUILDX_ACTION_VERSION" = v4.2.0
+          test "$SETUP_BUILDX_ACTION_COMMIT" = bb05f3f5519dd87d3ba754cc423b652a5edd6d2c
+          cp toolchain/host-build-toolchain.lock evidence/host-build-toolchain.lock
+          docker buildx version | tee evidence/host-buildx-version.txt
+          read -r buildx_module buildx_version buildx_commit \
+            < evidence/host-buildx-version.txt
+          test "$buildx_module" = github.com/docker/buildx
+          test "$buildx_version" = v0.36.1
+          test "$buildx_commit" = 1d8dde89b8aba914e05e45366770736fea1fd690
+          printf '%s\n' "$DAPPER_BUILDKIT_IMAGE" > evidence/host-buildkit-image.txt
           docker version > evidence/runner-docker-version.txt
           bash ./scripts/check-source-gates | tee evidence/build-policy.txt
 
@@ -82,18 +114,45 @@ jobs:
           }
           trap cleanup_dapper_builders EXIT
 
+          create_dapper_builder() {
+            local builder="$1"
+            local prefix="$2"
+            local builder_container="buildx_buildkit_${builder}0"
+
+            docker buildx create \
+              --driver docker-container \
+              --driver-opt "image=$DAPPER_BUILDKIT_IMAGE" \
+              --driver-opt network=host \
+              --name "$builder" >/dev/null
+            docker buildx inspect --bootstrap "$builder" \
+              > "evidence/${prefix}-buildkit-builder.txt"
+            awk '$1 == "BuildKit:" { print $2 }' \
+              "evidence/${prefix}-buildkit-builder.txt" \
+              > "evidence/${prefix}-buildkit-version.txt"
+            test "$(cat "evidence/${prefix}-buildkit-version.txt")" = v0.32.2
+            docker container inspect --format '{{.Config.Image}}' "$builder_container" \
+              > "evidence/${prefix}-buildkit-image.txt"
+            test "$(cat "evidence/${prefix}-buildkit-image.txt")" = "$DAPPER_BUILDKIT_IMAGE"
+          }
+
           capture_dapper_state() {
             local prefix="$1"
             local metadata_file="$2"
+            local iid_file="$3"
+            local daemon_image_id
             local manifest
 
-            jq -er '."containerimage.digest" | select(test("^sha256:[0-9a-f]{64}$"))' \
-              "$metadata_file" > "evidence/${prefix}-manifest-digest.txt"
-            jq -er '."containerimage.config.digest" | select(test("^sha256:[0-9a-f]{64}$"))' \
-              "$metadata_file" > "evidence/${prefix}-config-digest.txt"
-            docker image inspect --format '{{.Id}}' "$DAPPER_IMAGE" \
-              > "evidence/${prefix}-image-id.txt"
-            grep -Eq '^sha256:[0-9a-f]{64}$' "evidence/${prefix}-image-id.txt"
+            daemon_image_id="$(docker image inspect --format '{{.Id}}' "$DAPPER_IMAGE")"
+            bash scripts/resolve-dapper-image-identity \
+              "$metadata_file" \
+              "$iid_file" \
+              "$daemon_image_id" \
+              "evidence/${prefix}-manifest-digest.txt" \
+              "evidence/${prefix}-config-digest.txt"
+            printf '%s\n' "$daemon_image_id" > "evidence/${prefix}-image-id.txt"
+            diff -u \
+              "evidence/${prefix}-config-digest.txt" \
+              "evidence/${prefix}-image-id.txt"
             docker image inspect --format '{{.Created}}' "$DAPPER_IMAGE" \
               > "evidence/${prefix}-created.txt"
             test "$(cat "evidence/${prefix}-created.txt")" = "$expected_dapper_created"
@@ -123,11 +182,12 @@ jobs:
             done
           }
 
-          docker buildx create --driver docker-container --name "$first_dapper_builder" >/dev/null
+          create_dapper_builder "$first_dapper_builder" dapper-first
           make ci \
             DAPPER_IMAGE="$DAPPER_IMAGE" \
             DAPPER_BUILDER="$first_dapper_builder" \
             DAPPER_METADATA_FILE="$PWD/evidence/dapper-first-build-metadata.json" \
+            DAPPER_IID_FILE="$PWD/evidence/dapper-first-build.iid" \
             DAPPER_NO_CACHE=true \
             DAPPER_SOURCE_DATE_EPOCH="$source_date_epoch" \
             VERSION_OVERRIDE="$VERSION_OVERRIDE"
@@ -140,7 +200,8 @@ jobs:
           printf '%s\n' "$first_image_id" > evidence/runtime-image-first-id.txt
           sha256sum bin/ecr-credential-sync > evidence/ecr-credential-sync-first.sha256
           capture_dapper_state dapper-first \
-            evidence/dapper-first-build-metadata.json
+            evidence/dapper-first-build-metadata.json \
+            evidence/dapper-first-build.iid
 
           docker image rm "$runtime_image" "$DAPPER_IMAGE" >/dev/null
           rm -rf bin dist
@@ -148,11 +209,12 @@ jobs:
           first_dapper_builder=
           docker builder prune --all --force >/dev/null
 
-          docker buildx create --driver docker-container --name "$second_dapper_builder" >/dev/null
+          create_dapper_builder "$second_dapper_builder" dapper-second
           make ci \
             DAPPER_IMAGE="$DAPPER_IMAGE" \
             DAPPER_BUILDER="$second_dapper_builder" \
             DAPPER_METADATA_FILE="$PWD/evidence/dapper-second-build-metadata.json" \
+            DAPPER_IID_FILE="$PWD/evidence/dapper-second-build.iid" \
             DAPPER_NO_CACHE=true \
             DAPPER_SOURCE_DATE_EPOCH="$source_date_epoch" \
             VERSION_OVERRIDE="$VERSION_OVERRIDE"
@@ -162,12 +224,15 @@ jobs:
           test "$first_image_id" = "$second_image_id"
           sha256sum bin/ecr-credential-sync > evidence/ecr-credential-sync-second.sha256
           capture_dapper_state dapper-second \
-            evidence/dapper-second-build-metadata.json
+            evidence/dapper-second-build-metadata.json \
+            evidence/dapper-second-build.iid
           diff -u \
             evidence/ecr-credential-sync-first.sha256 \
             evidence/ecr-credential-sync-second.sha256
           for artifact in \
               image-id.txt \
+              buildkit-image.txt \
+              buildkit-version.txt \
               manifest-digest.txt \
               config-digest.txt \
               created.txt \

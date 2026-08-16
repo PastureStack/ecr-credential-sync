@@ -1,0 +1,106 @@
+#!/bin/bash
+set -euo pipefail
+
+if [ "$#" -ne 5 ]; then
+  printf 'usage: %s METADATA_FILE IID_FILE DAEMON_IMAGE_ID MANIFEST_OUTPUT CONFIG_OUTPUT\n' "$0" >&2
+  exit 64
+fi
+
+metadata_file=$1
+iid_file=$2
+daemon_image_id=$3
+manifest_output=$4
+config_output=$5
+digest_pattern='^sha256:[0-9a-f]{64}$'
+
+fail() {
+  printf 'ECR_SYNC_DAPPER_IMAGE_IDENTITY_INVALID reason=%s\n' "$1" >&2
+  exit 1
+}
+
+for required_file in "$metadata_file" "$iid_file"; do
+  [ -f "$required_file" ] || fail "missing-file:${required_file}"
+done
+
+for output_file in "$manifest_output" "$config_output"; do
+  [ ! -e "$output_file" ] || fail "output-already-exists:${output_file}"
+  [ -d "$(dirname "$output_file")" ] || fail "missing-output-directory:${output_file}"
+done
+[ "$manifest_output" != "$config_output" ] || fail output-paths-must-be-distinct
+
+mapfile -t iid_lines < "$iid_file"
+[ "${#iid_lines[@]}" -eq 1 ] || fail iid-file-must-contain-one-line
+iid_digest=${iid_lines[0]}
+[[ "$iid_digest" =~ $digest_pattern ]] || fail malformed-iid-digest
+[[ "$daemon_image_id" =~ $digest_pattern ]] || fail malformed-daemon-image-id
+[ "$iid_digest" = "$daemon_image_id" ] || fail iid-daemon-image-id-mismatch
+
+manifest_digest=$(
+  jq -er '
+    if type != "object" then
+      error("metadata root must be an object")
+    elif (."containerimage.digest" | type) == "string" and
+         (."containerimage.digest" | test("^sha256:[0-9a-f]{64}$")) then
+      ."containerimage.digest"
+    else
+      error("containerimage.digest is missing or malformed")
+    end
+  ' "$metadata_file"
+) || fail missing-or-malformed-manifest-digest
+
+top_level_config_record=$(
+  jq -ec '
+    if type != "object" then
+      error("metadata root must be an object")
+    elif has("containerimage.config.digest") and
+         ."containerimage.config.digest" != null then
+      if (."containerimage.config.digest" | type) == "string" then
+        {present: true, digest: ."containerimage.config.digest"}
+      else
+        error("containerimage.config.digest must be a string or null")
+      end
+    else
+      {present: false}
+    end
+  ' "$metadata_file"
+) || fail malformed-top-level-config-digest
+
+descriptor_config_record=$(
+  jq -ec '
+    ."containerimage.descriptor" as $descriptor
+    | if $descriptor == null then
+        {present: false}
+      elif ($descriptor | type) != "object" then
+        error("containerimage.descriptor must be an object or null")
+      elif $descriptor.annotations == null then
+        {present: false}
+      elif ($descriptor.annotations | type) != "object" then
+        error("containerimage.descriptor.annotations must be an object or null")
+      elif ($descriptor.annotations | has("config.digest")) and
+           $descriptor.annotations["config.digest"] != null then
+        if ($descriptor.annotations["config.digest"] | type) == "string" then
+          {present: true, digest: $descriptor.annotations["config.digest"]}
+        else
+          error("descriptor config.digest must be a string or null")
+        end
+      else
+        {present: false}
+      end
+  ' "$metadata_file"
+) || fail malformed-descriptor-config-digest
+
+metadata_cross_checks=0
+for metadata_config_record in "$top_level_config_record" "$descriptor_config_record"; do
+  if [ "$(jq -r '.present' <<<"$metadata_config_record")" = true ]; then
+    metadata_config=$(jq -r '.digest' <<<"$metadata_config_record")
+    [[ "$metadata_config" =~ $digest_pattern ]] || fail malformed-metadata-config-digest
+    [ "$metadata_config" = "$iid_digest" ] || fail metadata-iid-config-digest-mismatch
+    metadata_cross_checks=$((metadata_cross_checks + 1))
+  fi
+done
+
+umask 077
+printf '%s\n' "$manifest_digest" > "$manifest_output"
+printf '%s\n' "$iid_digest" > "$config_output"
+printf 'ECR_SYNC_DAPPER_IMAGE_IDENTITY_OK manifest=%s config=%s metadata_cross_checks=%s\n' \
+  "$manifest_digest" "$iid_digest" "$metadata_cross_checks"

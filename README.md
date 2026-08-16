@@ -87,11 +87,16 @@ dependencies. The build image compiles Docker CLI 29.7.2 from its checksum- and
 commit-locked official source with Go 1.26.6, and records both the binary hash
 and embedded Go build information. It also locks Buildx 0.36.1. A checksum-locked
 Buildx patch removes its sole compiled dependency on the legacy Docker module.
-The Ubuntu 26.04 base image is digest-pinned, and all direct APT
-packages are locked to the official `20260808T000000Z` Ubuntu snapshot. Each
-image records its resolved
-`dpkg` inventory, and the build image records the installed GCC, Go, Docker,
-and Buildx binaries.
+The host build client is installed by
+`docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c`
+(`v4.2.0`) as Buildx `v0.36.1`, while every Dapper builder uses BuildKit
+`v0.32.2` from
+`moby/buildkit:v0.32.2@sha256:28a898719c18a33f4e8000685287fa36fd0dd9560c6440227d3a732d79bb41d8`.
+These host-side locks are recorded in `toolchain/host-build-toolchain.lock` and
+the source SBOM. The Ubuntu 26.04 base image is digest-pinned, and all direct
+APT packages are locked to the official `20260808T000000Z` Ubuntu snapshot.
+Each image records its resolved `dpkg` inventory, and the build image records
+the installed GCC, Go, Docker, and Buildx binaries.
 
 ```bash
 VERSION_OVERRIDE=v3.1.0 ARCH=amd64 make build
@@ -102,9 +107,14 @@ These commands are local build and test targets. CI/CD publication and release
 automation are outside this proof-of-concept scope.
 
 GitHub Actions rebuilds the Linux binary and image twice without a build cache,
-compares their hashes, and produces source, build-image, and runtime CycloneDX
-SBOMs plus Trivy reports. The workflow never logs in to a registry, pushes an
-image, creates a release, or changes a deployment.
+using two isolated digest-pinned BuildKit builders. Each build records the
+Buildx IID as the configuration JSON digest, verifies it against the loaded
+Docker daemon image ID and every non-null metadata config digest, and separately
+records the exported manifest digest. It then compares the two image IDs,
+configuration digests, complete RootFS DiffID lists, creation timestamps,
+binaries, and embedded manifests. The workflow produces source, build-image,
+and runtime CycloneDX SBOMs plus Trivy reports. It never logs in to a registry,
+pushes an image, creates a release, or changes a deployment.
 
 The source SBOM intentionally inventories the preserved AWS SDK module even
 though only its ECR and supporting packages are vendored. Module-level scanners
@@ -115,8 +125,8 @@ fails the supply-chain workflow.
 
 ## Dependency version policy
 
-- Go, Docker CLI, Buildx, GitHub Actions, Linux and Windows base images, and
-  Trivy must use an exact version or immutable digest.
+- Go, Docker CLI, Buildx, BuildKit, GitHub Actions, Linux and Windows base
+  images, and Trivy must use an exact version, commit, or immutable digest.
 - The Ubuntu snapshot and every direct APT package version are one atomic lock;
   update them together and verify the resolved `dpkg` manifests.
 - Operational container references remain plain semantic version tags. Do not

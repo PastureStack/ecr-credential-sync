@@ -38,7 +38,19 @@ the test suite never waits on production delays.
 
 ## Build boundary
 
-- Build and runtime images use the digest-pinned Ubuntu 26.04 base. The build uses Go 1.26.6, Docker CLI 29.7.2, and the checksum-patched Buildx 0.36.1 source.
+- Build and runtime images use the digest-pinned Ubuntu 26.04 base. The build
+  uses Go 1.26.6, Docker CLI 29.7.2, and the checksum-patched Buildx 0.36.1
+  source.
+- The host Buildx client is `v0.36.1`, installed by
+  `docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c`
+  (`v4.2.0`). Dapper builders use BuildKit `v0.32.2` from
+  `moby/buildkit:v0.32.2@sha256:28a898719c18a33f4e8000685287fa36fd0dd9560c6440227d3a732d79bb41d8`.
+  The source gate rejects mutable BuildKit fallbacks.
+- Every Dapper export records its manifest digest separately. Its Buildx IID
+  must be a valid configuration JSON digest and must equal the loaded Docker
+  daemon image ID. Any non-null config digest emitted in Buildx metadata must
+  also match; missing, malformed, or conflicting required identity evidence
+  fails closed.
 - The build does not download the historical Dapper binary or use its retired
   upstream build image.
 - The Windows variant uses the Microsoft Nano Server LTSC 2022 base, runs as

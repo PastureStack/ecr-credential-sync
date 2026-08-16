@@ -1,0 +1,140 @@
+#!/bin/bash
+set -euo pipefail
+
+repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+resolver="${repo_root}/scripts/resolve-dapper-image-identity"
+fixture_root=$(mktemp -d)
+case "$fixture_root" in
+  /tmp/*|/var/tmp/*) ;;
+  *) exit 1 ;;
+esac
+trap 'rm -rf -- "$fixture_root"' EXIT
+
+printf -v config_a 'sha256:%064d' 0
+printf -v config_b 'sha256:%064d' 1
+printf -v manifest_digest 'sha256:%064d' 2
+
+run_resolver() {
+  local name=$1
+  local metadata=$2
+  local iid=$3
+  local daemon_id=$4
+
+  bash "$resolver" \
+    "$metadata" "$iid" "$daemon_id" \
+    "$fixture_root/${name}-manifest.txt" \
+    "$fixture_root/${name}-config.txt"
+}
+
+expect_failure() {
+  local name=$1
+  shift
+  if "$@" >"$fixture_root/${name}.stdout" 2>"$fixture_root/${name}.stderr"; then
+    printf 'expected identity fixture to fail: %s\n' "$name" >&2
+    exit 1
+  fi
+}
+
+cat > "$fixture_root/null-top-level.json" <<EOF
+{
+  "containerimage.digest": "${manifest_digest}",
+  "containerimage.config.digest": null,
+  "containerimage.descriptor": {
+    "annotations": {"config.digest": "${config_a}"}
+  }
+}
+EOF
+printf '%s\n' "$config_a" > "$fixture_root/valid.iid"
+run_resolver null-top-level \
+  "$fixture_root/null-top-level.json" "$fixture_root/valid.iid" "$config_a" >/dev/null
+test "$(cat "$fixture_root/null-top-level-manifest.txt")" = "$manifest_digest"
+test "$(cat "$fixture_root/null-top-level-config.txt")" = "$config_a"
+
+cat > "$fixture_root/config-metadata-absent.json" <<EOF
+{"containerimage.digest": "${manifest_digest}"}
+EOF
+run_resolver config-metadata-absent \
+  "$fixture_root/config-metadata-absent.json" \
+  "$fixture_root/valid.iid" "$config_a" >/dev/null
+
+cat > "$fixture_root/all-config-sources.json" <<EOF
+{
+  "containerimage.digest": "${manifest_digest}",
+  "containerimage.config.digest": "${config_a}",
+  "containerimage.descriptor": {
+    "annotations": {"config.digest": "${config_a}"}
+  }
+}
+EOF
+run_resolver all-config-sources \
+  "$fixture_root/all-config-sources.json" "$fixture_root/valid.iid" "$config_a" >/dev/null
+
+expect_failure iid-daemon-mismatch run_resolver iid-daemon-mismatch \
+  "$fixture_root/null-top-level.json" "$fixture_root/valid.iid" "$config_b"
+expect_failure missing-iid run_resolver missing-iid \
+  "$fixture_root/null-top-level.json" "$fixture_root/missing.iid" "$config_a"
+: > "$fixture_root/empty.iid"
+expect_failure empty-iid run_resolver empty-iid \
+  "$fixture_root/null-top-level.json" "$fixture_root/empty.iid" "$config_a"
+printf 'sha256:short\n' > "$fixture_root/malformed.iid"
+expect_failure malformed-iid run_resolver malformed-iid \
+  "$fixture_root/null-top-level.json" "$fixture_root/malformed.iid" "$config_a"
+expect_failure malformed-daemon-id run_resolver malformed-daemon-id \
+  "$fixture_root/null-top-level.json" "$fixture_root/valid.iid" 'sha256:short'
+
+cat > "$fixture_root/top-level-mismatch.json" <<EOF
+{
+  "containerimage.digest": "${manifest_digest}",
+  "containerimage.config.digest": "${config_b}"
+}
+EOF
+expect_failure top-level-mismatch run_resolver top-level-mismatch \
+  "$fixture_root/top-level-mismatch.json" "$fixture_root/valid.iid" "$config_a"
+
+cat > "$fixture_root/descriptor-mismatch.json" <<EOF
+{
+  "containerimage.digest": "${manifest_digest}",
+  "containerimage.config.digest": null,
+  "containerimage.descriptor": {
+    "annotations": {"config.digest": "${config_b}"}
+  }
+}
+EOF
+expect_failure descriptor-mismatch run_resolver descriptor-mismatch \
+  "$fixture_root/descriptor-mismatch.json" "$fixture_root/valid.iid" "$config_a"
+
+cat > "$fixture_root/missing-manifest.json" <<EOF
+{"containerimage.config.digest": null}
+EOF
+expect_failure missing-manifest run_resolver missing-manifest \
+  "$fixture_root/missing-manifest.json" "$fixture_root/valid.iid" "$config_a"
+
+cat > "$fixture_root/malformed-manifest.json" <<EOF
+{"containerimage.digest": "sha256:short"}
+EOF
+expect_failure malformed-manifest run_resolver malformed-manifest \
+  "$fixture_root/malformed-manifest.json" "$fixture_root/valid.iid" "$config_a"
+
+cat > "$fixture_root/non-string-config.json" <<EOF
+{
+  "containerimage.digest": "${manifest_digest}",
+  "containerimage.config.digest": {"digest": "${config_a}"}
+}
+EOF
+expect_failure non-string-config run_resolver non-string-config \
+  "$fixture_root/non-string-config.json" "$fixture_root/valid.iid" "$config_a"
+
+cat > "$fixture_root/malformed-config.json" <<EOF
+{
+  "containerimage.digest": "${manifest_digest}",
+  "containerimage.config.digest": "sha256:short"
+}
+EOF
+expect_failure malformed-config run_resolver malformed-config \
+  "$fixture_root/malformed-config.json" "$fixture_root/valid.iid" "$config_a"
+
+printf '{not-json}\n' > "$fixture_root/invalid.json"
+expect_failure invalid-json run_resolver invalid-json \
+  "$fixture_root/invalid.json" "$fixture_root/valid.iid" "$config_a"
+
+printf 'ECR_SYNC_DAPPER_IMAGE_IDENTITY_FIXTURES_OK positive=3 negative=12\n'

@@ -83,19 +83,33 @@ require_marker README.md 'compiles Docker CLI 29.7.2 from its checksum- and' ECR
 reject_marker Dockerfile.dapper 'ARG UBUNTU_MIRROR=' ECR_SYNC_ROLLING_APT_MIRROR_PRESENT
 require_marker Makefile 'DAPPER_SOURCE_DATE_EPOCH ?= $(shell git show -s --format=%ct HEAD)' ECR_SYNC_DAPPER_SOURCE_EPOCH_DERIVATION_MISSING
 require_marker Makefile 'SOURCE_DATE_EPOCH=$(DAPPER_SOURCE_DATE_EPOCH) docker buildx build' ECR_SYNC_DAPPER_BUILDX_BUILD_MISSING
+require_marker Makefile 'DAPPER_IID_FILE ?=' ECR_SYNC_DAPPER_IID_OUTPUT_MISSING
+require_marker Makefile '--iidfile $(DAPPER_IID_FILE)' ECR_SYNC_DAPPER_IID_ARGUMENT_MISSING
 require_marker Makefile '--output "type=docker,name=$(DAPPER_IMAGE),rewrite-timestamp=true,compatibility-version=20"' ECR_SYNC_DAPPER_REPRODUCIBLE_EXPORT_MISSING
 require_marker Makefile '--build-arg SOURCE_DATE_EPOCH=$(DAPPER_SOURCE_DATE_EPOCH)' ECR_SYNC_DAPPER_SOURCE_EPOCH_BUILD_ARG_MISSING
 require_marker Makefile 'bash ./scripts/normalize-runtime-context-mtimes' ECR_SYNC_DAPPER_CONTEXT_MTIME_NORMALIZER_MISSING
 require_marker Dockerfile.dapper 'ARG SOURCE_DATE_EPOCH' ECR_SYNC_DAPPER_DOCKERFILE_SOURCE_EPOCH_MISSING
 require_marker Dockerfile.dapper 'touch --no-dereference --date="@${SOURCE_DATE_EPOCH}" /snapshot-ca-certificates.crt' ECR_SYNC_DAPPER_CA_MTIME_NORMALIZATION_MISSING
-require_marker .github/workflows/supply-chain.yml 'docker buildx create --driver docker-container --name "$first_dapper_builder"' ECR_SYNC_DAPPER_ISOLATED_FIRST_BUILD_MISSING
-require_marker .github/workflows/supply-chain.yml 'docker buildx create --driver docker-container --name "$second_dapper_builder"' ECR_SYNC_DAPPER_ISOLATED_SECOND_BUILD_MISSING
+require_marker .github/workflows/supply-chain.yml 'create_dapper_builder "$first_dapper_builder" dapper-first' ECR_SYNC_DAPPER_ISOLATED_FIRST_BUILD_MISSING
+require_marker .github/workflows/supply-chain.yml 'create_dapper_builder "$second_dapper_builder" dapper-second' ECR_SYNC_DAPPER_ISOLATED_SECOND_BUILD_MISSING
 require_marker .github/workflows/supply-chain.yml 'DAPPER_NO_CACHE=true' ECR_SYNC_DAPPER_NO_CACHE_PROOF_MISSING
-require_marker .github/workflows/supply-chain.yml '."containerimage.config.digest"' ECR_SYNC_DAPPER_CONFIG_DIGEST_GATE_MISSING
+require_marker .github/workflows/supply-chain.yml 'DAPPER_IID_FILE="$PWD/evidence/dapper-first-build.iid"' ECR_SYNC_DAPPER_FIRST_IID_MISSING
+require_marker .github/workflows/supply-chain.yml 'DAPPER_IID_FILE="$PWD/evidence/dapper-second-build.iid"' ECR_SYNC_DAPPER_SECOND_IID_MISSING
+require_marker .github/workflows/supply-chain.yml 'bash scripts/resolve-dapper-image-identity' ECR_SYNC_DAPPER_IDENTITY_RESOLVER_MISSING
+require_marker .github/workflows/supply-chain.yml 'daemon_image_id="$(docker image inspect --format' ECR_SYNC_DAPPER_DAEMON_INSPECT_MISSING
+require_marker .github/workflows/supply-chain.yml '"evidence/${prefix}-config-digest.txt"' ECR_SYNC_DAPPER_CONFIG_DIGEST_GATE_MISSING
+require_marker .github/workflows/supply-chain.yml '"evidence/${prefix}-image-id.txt"' ECR_SYNC_DAPPER_DAEMON_ID_CROSS_CHECK_MISSING
+reject_marker .github/workflows/supply-chain.yml 'containerimage.config.digest" | select(test' ECR_SYNC_FRAGILE_METADATA_CONFIG_GATE_PRESENT
 require_marker .github/workflows/supply-chain.yml 'test "$(cat "evidence/${prefix}-created.txt")" = "$expected_dapper_created"' ECR_SYNC_DAPPER_CREATED_EPOCH_GATE_MISSING
 require_marker .github/workflows/supply-chain.yml 'invalid or empty Dapper RootFS DiffID list' ECR_SYNC_DAPPER_ROOTFS_DIFFID_GATE_MISSING
 require_marker .github/workflows/supply-chain.yml '"evidence/dapper-first-${artifact}"' ECR_SYNC_DAPPER_FIRST_ARTIFACT_COMPARISON_MISSING
 require_marker .github/workflows/supply-chain.yml '"evidence/dapper-second-${artifact}"' ECR_SYNC_DAPPER_SECOND_ARTIFACT_COMPARISON_MISSING
+require_marker scripts/resolve-dapper-image-identity 'iid-daemon-image-id-mismatch' ECR_SYNC_DAPPER_IID_DAEMON_GATE_MISSING
+require_marker scripts/resolve-dapper-image-identity 'metadata-iid-config-digest-mismatch' ECR_SYNC_DAPPER_METADATA_IID_GATE_MISSING
+require_marker scripts/resolve-dapper-image-identity '$descriptor.annotations["config.digest"]' ECR_SYNC_DAPPER_DESCRIPTOR_CONFIG_GATE_MISSING
+require_marker scripts/test-dapper-image-identity 'null-top-level.json' ECR_SYNC_DAPPER_NULL_METADATA_REGRESSION_MISSING
+require_marker scripts/test-dapper-image-identity 'iid-daemon-mismatch' ECR_SYNC_DAPPER_MISMATCH_REGRESSION_MISSING
+require_marker scripts/test-dapper-image-identity 'missing-manifest' ECR_SYNC_DAPPER_MANIFEST_REGRESSION_MISSING
 require_marker package/Dockerfile 'USER 10001:10001' ECR_SYNC_RUNTIME_NOT_NON_ROOT
 require_marker package/Dockerfile 'COPY --chown=0:0 --chmod=0444 ubuntu-apt.lock /usr/share/pasturestack/manifests/ubuntu-apt.lock' ECR_SYNC_RUNTIME_LOCK_MODE_NOT_EXPLICIT
 require_marker package/Dockerfile 'chmod 0755 /usr/share/pasturestack /usr/share/pasturestack/manifests' ECR_SYNC_RUNTIME_MANIFEST_DIRECTORY_MODE_MISSING
@@ -138,8 +152,14 @@ require_marker README.md 'ghcr.io/pasturestack/ecr-credential-sync:v3.1.0' ECR_S
 
 if ! bash -n scripts/build scripts/check-source-gates scripts/ci scripts/entry \
   scripts/normalize-runtime-context-mtimes scripts/package scripts/release \
-  scripts/test scripts/validate scripts/version; then
+  scripts/resolve-dapper-image-identity scripts/test \
+  scripts/test-dapper-image-identity scripts/validate scripts/version; then
   printf 'ECR_SYNC_SHELL_SYNTAX_INVALID\n' >&2
+  failure_count=$((failure_count + 1))
+fi
+
+if ! bash scripts/test-dapper-image-identity; then
+  printf 'ECR_SYNC_DAPPER_IMAGE_IDENTITY_FIXTURES_INVALID\n' >&2
   failure_count=$((failure_count + 1))
 fi
 
@@ -195,6 +215,7 @@ if ! (
       DAPPER_IMAGE=fixture/dapper:contract \
       DAPPER_BUILDER=fixture-builder \
       DAPPER_METADATA_FILE=/tmp/dapper-fixture-metadata.json \
+      DAPPER_IID_FILE=/tmp/dapper-fixture.iid \
       DAPPER_NO_CACHE=true \
       DAPPER_SOURCE_DATE_EPOCH=946684800
   )
@@ -203,6 +224,7 @@ if ! (
   grep -F -- '--builder fixture-builder' <<<"$dapper_recipe" >/dev/null
   grep -F -- '--no-cache' <<<"$dapper_recipe" >/dev/null
   grep -F -- '--metadata-file /tmp/dapper-fixture-metadata.json' <<<"$dapper_recipe" >/dev/null
+  grep -F -- '--iidfile /tmp/dapper-fixture.iid' <<<"$dapper_recipe" >/dev/null
   grep -F -- '--output "type=docker,name=fixture/dapper:contract,rewrite-timestamp=true,compatibility-version=20"' <<<"$dapper_recipe" >/dev/null
   grep -F -- '--build-arg SOURCE_DATE_EPOCH=946684800' <<<"$dapper_recipe" >/dev/null
 ); then
@@ -228,6 +250,20 @@ if ! (
   failure_count=$((failure_count + 1))
 fi
 
+if ! (
+  set -euo pipefail
+  source toolchain/host-build-toolchain.lock
+  test "$HOST_BUILDX_VERSION" = 'v0.36.1'
+  test "$HOST_BUILDX_COMMIT" = '1d8dde89b8aba914e05e45366770736fea1fd690'
+  test "$HOST_BUILDKIT_VERSION" = 'v0.32.2'
+  test "$HOST_BUILDKIT_IMAGE" = 'moby/buildkit:v0.32.2@sha256:28a898719c18a33f4e8000685287fa36fd0dd9560c6440227d3a732d79bb41d8'
+  test "$SETUP_BUILDX_ACTION_VERSION" = 'v4.2.0'
+  test "$SETUP_BUILDX_ACTION_COMMIT" = 'bb05f3f5519dd87d3ba754cc423b652a5edd6d2c'
+); then
+  printf 'ECR_SYNC_HOST_BUILD_TOOLCHAIN_LOCK_INVALID\n' >&2
+  failure_count=$((failure_count + 1))
+fi
+
 for package_key in BASH CA_CERTIFICATES CURL GCC GIT LIBC6_DEV MAKE TAR XZ_UTILS; do
   package_name="${package_key,,}"
   package_name="${package_name//_/-}"
@@ -242,6 +278,20 @@ require_marker .github/workflows/repository-integrity.yml \
 require_marker .github/workflows/supply-chain.yml \
   'aquasec/trivy:0.74.0@sha256:62b1e65e8869bc4b4c6aa4fa2b21595256c7c2f6018a9d9ad61caf87187c1969' \
   ECR_SYNC_TRIVY_NOT_PINNED
+require_marker .github/workflows/supply-chain.yml \
+  'docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0' \
+  ECR_SYNC_HOST_BUILDX_ACTION_NOT_PINNED
+require_marker .github/workflows/supply-chain.yml 'version: v0.36.1' ECR_SYNC_HOST_BUILDX_VERSION_NOT_PINNED
+require_marker .github/workflows/supply-chain.yml \
+  'moby/buildkit:v0.32.2@sha256:28a898719c18a33f4e8000685287fa36fd0dd9560c6440227d3a732d79bb41d8' \
+  ECR_SYNC_HOST_BUILDKIT_IMAGE_NOT_PINNED
+require_marker .github/workflows/supply-chain.yml '--driver-opt "image=$DAPPER_BUILDKIT_IMAGE"' ECR_SYNC_DAPPER_BUILDKIT_IMAGE_ARGUMENT_MISSING
+require_marker .github/workflows/supply-chain.yml 'test "$(cat "evidence/${prefix}-buildkit-version.txt")" = v0.32.2' ECR_SYNC_DAPPER_BUILDKIT_VERSION_GATE_MISSING
+require_marker .github/workflows/supply-chain.yml 'test "$(cat "evidence/${prefix}-buildkit-image.txt")" = "$DAPPER_BUILDKIT_IMAGE"' ECR_SYNC_DAPPER_BUILDKIT_IMAGE_GATE_MISSING
+require_marker .github/workflows/supply-chain.yml 'test "$buildx_commit" = 1d8dde89b8aba914e05e45366770736fea1fd690' ECR_SYNC_HOST_BUILDX_COMMIT_GATE_MISSING
+reject_marker .github/workflows/supply-chain.yml 'moby/buildkit:buildx-stable-1' ECR_SYNC_MUTABLE_BUILDKIT_STABLE_FALLBACK_PRESENT
+reject_marker .github/workflows/supply-chain.yml 'moby/buildkit:latest' ECR_SYNC_MUTABLE_BUILDKIT_LATEST_PRESENT
+reject_marker .github/workflows/supply-chain.yml 'docker/setup-buildx-action@v' ECR_SYNC_MUTABLE_BUILDX_ACTION_PRESENT
 require_marker .github/workflows/supply-chain.yml 'retention-days: 30' ECR_SYNC_EVIDENCE_RETENTION_NOT_30_DAYS
 require_marker .github/workflows/supply-chain.yml 'runtime.cdx.json' ECR_SYNC_RUNTIME_SBOM_MISSING
 require_marker .github/workflows/supply-chain.yml 'dapper.cdx.json' ECR_SYNC_DAPPER_SBOM_MISSING
@@ -259,6 +309,13 @@ reject_marker scripts/entry 'exec "$@"' ECR_SYNC_ENTRY_EXEC_BYPASSES_CLEANUP
 reject_marker .github/workflows/supply-chain.yml 'sudo rm' ECR_SYNC_PRIVILEGED_CLEANUP_PRESENT
 require_marker scripts/generate-source-sbom.py 'vendor lock contains no versioned dependencies' ECR_SYNC_VENDOR_SBOM_GENERATOR_MISSING
 require_marker scripts/generate-source-sbom.py 'replace("\r\n", "\n")' ECR_SYNC_VENDOR_SBOM_LINE_ENDINGS_NOT_CANONICAL
+require_marker scripts/generate-source-sbom.py 'pasturestack:host-buildx-version' ECR_SYNC_SOURCE_SBOM_HOST_BUILDX_MISSING
+require_marker scripts/generate-source-sbom.py 'pasturestack:host-buildx-commit' ECR_SYNC_SOURCE_SBOM_HOST_BUILDX_COMMIT_MISSING
+require_marker scripts/generate-source-sbom.py 'pasturestack:host-buildkit-image' ECR_SYNC_SOURCE_SBOM_HOST_BUILDKIT_MISSING
+require_marker scripts/generate-source-sbom.py 'pasturestack:setup-buildx-action-commit' ECR_SYNC_SOURCE_SBOM_BUILDX_ACTION_MISSING
+require_marker README.md 'docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c' ECR_SYNC_HOST_BUILDX_DOC_MISSING
+require_marker README.md 'moby/buildkit:v0.32.2@sha256:28a898719c18a33f4e8000685287fa36fd0dd9560c6440227d3a732d79bb41d8' ECR_SYNC_HOST_BUILDKIT_DOC_MISSING
+require_marker SECURITY.md 'Buildx IID' ECR_SYNC_DAPPER_IDENTITY_SECURITY_DOC_MISSING
 require_marker security/openvex.json '"status": "fixed"' ECR_SYNC_SOURCE_VEX_FIXED_STATUS_MISSING
 require_marker security/openvex.json '"status": "not_affected"' ECR_SYNC_SOURCE_VEX_NOT_AFFECTED_STATUS_MISSING
 require_marker security/openvex.json '"justification": "vulnerable_code_not_present"' ECR_SYNC_SOURCE_VEX_JUSTIFICATION_MISSING
@@ -389,5 +446,5 @@ if [ "$failure_count" -ne 0 ]; then
   exit 1
 fi
 
-printf 'ECR_SYNC_SOURCE_GATES_OK go=1.26.6 docker=29.7.2 docker_cli_source_built=go1.26.6 buildx=0.36.1 ubuntu=26.04 snapshot=20260808T000000Z non_root=1 legal_files=%s endpoint_override=bounded brand_gate=tracked_source_only runtime_manifest_access=default-user-read-only buildx_legacy_module_removed=1 runtime_mtime_normalization=all_local_copy_inputs dapper_reproducibility=buildkit-rewrite-timestamp sbom_trivy_gate=1\n' \
+printf 'ECR_SYNC_SOURCE_GATES_OK go=1.26.6 docker=29.7.2 docker_cli_source_built=go1.26.6 buildx=0.36.1 host_buildx=0.36.1 host_buildkit=0.32.2 dapper_identity=iid-daemon-metadata-cross-check ubuntu=26.04 snapshot=20260808T000000Z non_root=1 legal_files=%s endpoint_override=bounded brand_gate=tracked_source_only runtime_manifest_access=default-user-read-only buildx_legacy_module_removed=1 runtime_mtime_normalization=all_local_copy_inputs dapper_reproducibility=buildkit-rewrite-timestamp sbom_trivy_gate=1\n' \
   "$legal_count"
