@@ -26,6 +26,22 @@ reject_marker() {
   fi
 }
 
+brand_source_has_forbidden_reference() {
+  local source_root=$1
+
+  # Git controls the source boundary. This includes tracked working-tree edits
+  # while excluding untracked build, evidence, cache, bin, and dist artifacts.
+  git -C "$source_root" grep -nEi 'rancher' -- \
+    . \
+    ':(top,exclude)vendor/**' \
+    ':(top,exclude)scripts/check-source-gates' \
+    ':(top,exclude)README.md' \
+    ':(top,exclude)ORIGIN.md' \
+    ':(top,exclude)COMPATIBILITY.md' \
+    ':(top,exclude)THIRD_PARTY_NOTICES.md' \
+    ':(top,exclude)UNOFFICIAL_MAINTENANCE_FORK.md'
+}
+
 require_marker Dockerfile.dapper 'ARG GO_VERSION=1.26.6' ECR_SYNC_GO_VERSION_NOT_CURRENT
 require_marker Dockerfile.dapper 'ARG GO_LINUX_AMD64_SHA256=708effb774be8237570d0add163225abbdfaf4fca28b2611df167beba4feef89' ECR_SYNC_GO_AMD64_SHA_MISSING
 require_marker Dockerfile.dapper 'ARG GO_LINUX_ARM64_SHA256=d0507e9e9d7fe012aae570108cbd76c15de879e17130ab8cb90d4d7445cb1f2e' ECR_SYNC_GO_ARM64_SHA_MISSING
@@ -260,13 +276,54 @@ if [ -n "${PASTURESTACK_PRIVATE_PATTERN_FILE:-}" ] &&
   failure_count=$((failure_count + 1))
 fi
 
-if grep -RInE --exclude-dir=.git --exclude-dir=vendor --exclude=.git \
-  --exclude=check-source-gates \
-  --exclude=README.md --exclude=ORIGIN.md --exclude=COMPATIBILITY.md \
-  --exclude=THIRD_PARTY_NOTICES.md --exclude=UNOFFICIAL_MAINTENANCE_FORK.md \
-  'rancher' . >/dev/null; then
+if ! (
+  set -euo pipefail
+  brand_test_root=$(mktemp -d)
+  case "$brand_test_root" in
+    /tmp/*|/var/tmp/*) ;;
+    *) exit 1 ;;
+  esac
+  trap 'rm -rf -- "$brand_test_root"' EXIT
+  fixture_repo="$brand_test_root/repository"
+  mkdir -p "$fixture_repo/evidence"
+  git -C "$fixture_repo" init -q
+  git -C "$fixture_repo" config core.autocrlf false
+  printf 'package fixture\n' > "$fixture_repo/main.go"
+  printf 'Rancher compatibility attribution\n' > "$fixture_repo/README.md"
+  git -C "$fixture_repo" add main.go README.md
+
+  if brand_source_has_forbidden_reference "$fixture_repo" >/dev/null; then
+    exit 1
+  elif [ "$?" -ne 1 ]; then
+    exit 1
+  fi
+
+  printf 'Rancher transient build metadata\n' > "$fixture_repo/evidence/generated.txt"
+  if brand_source_has_forbidden_reference "$fixture_repo" >/dev/null; then
+    exit 1
+  elif [ "$?" -ne 1 ]; then
+    exit 1
+  fi
+
+  printf 'package fixture // Rancher product reference\n' > "$fixture_repo/main.go"
+  if ! brand_source_has_forbidden_reference "$fixture_repo" >/dev/null; then
+    exit 1
+  fi
+); then
+  printf 'ECR_SYNC_BRAND_SOURCE_BOUNDARY_CONTRACT_INVALID\n' >&2
+  failure_count=$((failure_count + 1))
+fi
+
+brand_scan_status=0
+if brand_source_has_forbidden_reference "$repo_root" >/dev/null; then
   printf 'ECR_SYNC_BRAND_REFERENCE_OUTSIDE_ATTRIBUTION_FOUND\n' >&2
   failure_count=$((failure_count + 1))
+else
+  brand_scan_status=$?
+  if [ "$brand_scan_status" -ne 1 ]; then
+    printf 'ECR_SYNC_BRAND_SOURCE_SCAN_FAILED status=%s\n' "$brand_scan_status" >&2
+    failure_count=$((failure_count + 1))
+  fi
 fi
 
 if grep -RInE --exclude-dir=.git --exclude-dir=vendor --exclude=.git \
@@ -281,5 +338,5 @@ if [ "$failure_count" -ne 0 ]; then
   exit 1
 fi
 
-printf 'ECR_SYNC_SOURCE_GATES_OK go=1.26.6 docker=29.7.2 docker_cli_source_built=go1.26.6 buildx=0.36.1 ubuntu=26.04 snapshot=20260808T000000Z non_root=1 legal_files=%s endpoint_override=bounded buildx_legacy_module_removed=1 runtime_mtime_normalization=all_local_copy_inputs sbom_trivy_gate=1\n' \
+printf 'ECR_SYNC_SOURCE_GATES_OK go=1.26.6 docker=29.7.2 docker_cli_source_built=go1.26.6 buildx=0.36.1 ubuntu=26.04 snapshot=20260808T000000Z non_root=1 legal_files=%s endpoint_override=bounded brand_gate=tracked_source_only buildx_legacy_module_removed=1 runtime_mtime_normalization=all_local_copy_inputs sbom_trivy_gate=1\n' \
   "$legal_count"
