@@ -35,9 +35,11 @@ ARG UBUNTU_IMAGE
 ENV DEBIAN_FRONTEND=noninteractive
 
 COPY --from=snapshot-ca-bootstrap /snapshot-ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
-COPY ubuntu-apt.lock /usr/share/pasturestack/manifests/ubuntu-apt.lock
+COPY --chown=0:0 --chmod=0444 ubuntu-apt.lock /usr/share/pasturestack/manifests/ubuntu-apt.lock
 
 RUN set -eux; \
+    chown 0:0 /usr/share/pasturestack /usr/share/pasturestack/manifests; \
+    chmod 0755 /usr/share/pasturestack /usr/share/pasturestack/manifests; \
     case "${SOURCE_DATE_EPOCH}" in ''|*[!0-9]*) exit 64 ;; esac; \
     test "${SOURCE_DATE_EPOCH}" -le "$(date -u +%s)"; \
     . /usr/share/pasturestack/manifests/ubuntu-apt.lock; \
@@ -58,6 +60,19 @@ RUN set -eux; \
         printf 'metadata\tbase_image\t-\t%s\n' "${UBUNTU_IMAGE}"; \
         dpkg-query -W -f='package\t${binary:Package}\t${Architecture}\t${Version}\n' | LC_ALL=C sort; \
     } > /usr/share/pasturestack/manifests/runtime-ubuntu-packages.tsv; \
+    chmod 0444 \
+        /usr/share/pasturestack/manifests/ubuntu-apt.lock \
+        /usr/share/pasturestack/manifests/runtime-ubuntu-packages.tsv; \
+    for manifest_directory in \
+        /usr/share/pasturestack \
+        /usr/share/pasturestack/manifests; do \
+      test "$(stat -c '%u:%g:%a' "${manifest_directory}")" = '0:0:755'; \
+    done; \
+    for locked_manifest in \
+        /usr/share/pasturestack/manifests/ubuntu-apt.lock \
+        /usr/share/pasturestack/manifests/runtime-ubuntu-packages.tsv; do \
+      test "$(stat -c '%u:%g:%a' "${locked_manifest}")" = '0:0:444'; \
+    done; \
     apt-get clean; \
     rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/* /tmp/* /var/tmp/*; \
     rm -f /var/log/apt/* /var/log/dpkg.log /var/log/alternatives.log /var/cache/ldconfig/aux-cache; \

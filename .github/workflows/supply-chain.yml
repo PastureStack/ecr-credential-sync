@@ -99,6 +99,34 @@ jobs:
           set -euo pipefail
           snapshot="$(. ./ubuntu-apt.lock; printf '%s' "$UBUNTU_APT_LOCKED_SNAPSHOT")"
 
+          verify_runtime_manifest_access() {
+            local image="$1"
+
+            docker run --rm --entrypoint /bin/sh "$image" -ec '
+              manifest_root=/usr/share/pasturestack/manifests
+              test "$(id -u):$(id -g)" = "10001:10001"
+              for manifest_parent in / /usr /usr/share /usr/share/pasturestack "$manifest_root"; do
+                test -d "$manifest_parent"
+                test -r "$manifest_parent"
+                test -x "$manifest_parent"
+                test "$(stat -c %u:%g "$manifest_parent")" = "0:0"
+                test -z "$(find "$manifest_parent" -maxdepth 0 -perm /022 -print -quit)"
+              done
+              test -z "$(find /usr/share/pasturestack -type d -perm /022 -print -quit)"
+              test -z "$(find "$manifest_root" -type f -perm /022 -print -quit)"
+              test -z "$(find "$manifest_root" -type f ! -perm -0444 -print -quit)"
+              test -z "$(find "$manifest_root" -type f ! -user root -print -quit)"
+              test -z "$(find "$manifest_root" -type f ! -group root -print -quit)"
+              for required_manifest in \
+                  "$manifest_root/ubuntu-apt.lock" \
+                  "$manifest_root/runtime-ubuntu-packages.tsv"; do
+                test -f "$required_manifest"
+                test -r "$required_manifest"
+                cat "$required_manifest" >/dev/null
+              done
+            '
+          }
+
           verify_dpkg_manifest() {
             local image="$1"
             local prefix="$2"
@@ -130,6 +158,7 @@ jobs:
           verify_dpkg_manifest \
             "$DAPPER_IMAGE" dapper \
             /usr/share/pasturestack/manifests/dapper-ubuntu-packages.tsv
+          verify_runtime_manifest_access "$RUNTIME_IMAGE"
           verify_dpkg_manifest \
             "$RUNTIME_IMAGE" runtime \
             /usr/share/pasturestack/manifests/runtime-ubuntu-packages.tsv

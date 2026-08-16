@@ -82,6 +82,20 @@ require_marker .github/workflows/supply-chain.yml 'dapper_unreviewed_critical_hi
 require_marker README.md 'compiles Docker CLI 29.7.2 from its checksum- and' ECR_SYNC_DOCKER_SOURCE_BUILD_DOC_MISSING
 reject_marker Dockerfile.dapper 'ARG UBUNTU_MIRROR=' ECR_SYNC_ROLLING_APT_MIRROR_PRESENT
 require_marker package/Dockerfile 'USER 10001:10001' ECR_SYNC_RUNTIME_NOT_NON_ROOT
+require_marker package/Dockerfile 'COPY --chown=0:0 --chmod=0444 ubuntu-apt.lock /usr/share/pasturestack/manifests/ubuntu-apt.lock' ECR_SYNC_RUNTIME_LOCK_MODE_NOT_EXPLICIT
+require_marker package/Dockerfile 'chmod 0755 /usr/share/pasturestack /usr/share/pasturestack/manifests' ECR_SYNC_RUNTIME_MANIFEST_DIRECTORY_MODE_MISSING
+require_marker package/Dockerfile 'chmod 0444 \' ECR_SYNC_RUNTIME_MANIFEST_FILE_MODE_MISSING
+require_marker .github/workflows/supply-chain.yml 'test "$(id -u):$(id -g)" = "10001:10001"' ECR_SYNC_RUNTIME_MANIFEST_DEFAULT_USER_GATE_MISSING
+require_marker .github/workflows/supply-chain.yml 'for manifest_parent in / /usr /usr/share /usr/share/pasturestack "$manifest_root"' ECR_SYNC_RUNTIME_MANIFEST_PARENT_TRAVERSE_GATE_MISSING
+require_marker .github/workflows/supply-chain.yml 'find /usr/share/pasturestack -type d -perm /022' ECR_SYNC_RUNTIME_MANIFEST_DIRECTORY_WRITE_GATE_MISSING
+require_marker .github/workflows/supply-chain.yml 'find "$manifest_root" -type f -perm /022' ECR_SYNC_RUNTIME_MANIFEST_WRITE_MODE_GATE_MISSING
+require_marker .github/workflows/supply-chain.yml 'find "$manifest_root" -type f ! -perm -0444' ECR_SYNC_RUNTIME_MANIFEST_READ_MODE_GATE_MISSING
+require_marker .github/workflows/supply-chain.yml 'test -f "$required_manifest"' ECR_SYNC_RUNTIME_MANIFEST_COMPLETENESS_GATE_MISSING
+require_marker .github/workflows/supply-chain.yml 'cat "$required_manifest" >/dev/null' ECR_SYNC_RUNTIME_MANIFEST_READ_GATE_MISSING
+reject_marker package/Dockerfile 'chmod 777' ECR_SYNC_RUNTIME_WORLD_WRITABLE_MODE_PRESENT
+reject_marker package/Dockerfile 'USER root' ECR_SYNC_RUNTIME_ROOT_USER_PRESENT
+reject_marker .github/workflows/supply-chain.yml '--user root' ECR_SYNC_RUNTIME_MANIFEST_ROOT_OVERRIDE_PRESENT
+reject_marker .github/workflows/supply-chain.yml '--user 0' ECR_SYNC_RUNTIME_MANIFEST_UID_ZERO_OVERRIDE_PRESENT
 require_marker package/Dockerfile 'COPY licenses/third-party/ /licenses/third-party/' ECR_SYNC_RUNTIME_LEGAL_FILES_MISSING
 require_marker package/Dockerfile 'org.opencontainers.image.version="${VERSION}"' ECR_SYNC_OCI_VERSION_MISSING
 require_marker package/Dockerfile 'org.opencontainers.image.revision="${REVISION}"' ECR_SYNC_OCI_REVISION_MISSING
@@ -338,5 +352,5 @@ if [ "$failure_count" -ne 0 ]; then
   exit 1
 fi
 
-printf 'ECR_SYNC_SOURCE_GATES_OK go=1.26.6 docker=29.7.2 docker_cli_source_built=go1.26.6 buildx=0.36.1 ubuntu=26.04 snapshot=20260808T000000Z non_root=1 legal_files=%s endpoint_override=bounded brand_gate=tracked_source_only buildx_legacy_module_removed=1 runtime_mtime_normalization=all_local_copy_inputs sbom_trivy_gate=1\n' \
+printf 'ECR_SYNC_SOURCE_GATES_OK go=1.26.6 docker=29.7.2 docker_cli_source_built=go1.26.6 buildx=0.36.1 ubuntu=26.04 snapshot=20260808T000000Z non_root=1 legal_files=%s endpoint_override=bounded brand_gate=tracked_source_only runtime_manifest_access=default-user-read-only buildx_legacy_module_removed=1 runtime_mtime_normalization=all_local_copy_inputs sbom_trivy_gate=1\n' \
   "$legal_count"
