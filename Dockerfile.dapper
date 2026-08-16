@@ -73,6 +73,7 @@ RUN set -eux; \
         curl="${UBUNTU_APT_CURL_VERSION}" \
         gcc="${UBUNTU_APT_GCC_VERSION}" \
         git="${UBUNTU_APT_GIT_VERSION}" \
+        jq="${UBUNTU_APT_JQ_VERSION}" \
         libc6-dev="${UBUNTU_APT_LIBC6_DEV_VERSION}" \
         make="${UBUNTU_APT_MAKE_VERSION}" \
         tar="${UBUNTU_APT_TAR_VERSION}" \
@@ -83,6 +84,7 @@ RUN set -eux; \
         "curl=${UBUNTU_APT_CURL_VERSION}" \
         "gcc=${UBUNTU_APT_GCC_VERSION}" \
         "git=${UBUNTU_APT_GIT_VERSION}" \
+        "jq=${UBUNTU_APT_JQ_VERSION}" \
         "libc6-dev=${UBUNTU_APT_LIBC6_DEV_VERSION}" \
         "make=${UBUNTU_APT_MAKE_VERSION}" \
         "tar=${UBUNTU_APT_TAR_VERSION}" \
@@ -91,6 +93,7 @@ RUN set -eux; \
         expected="${package_and_version#*=}"; \
         test "$(dpkg-query -W -f='${Version}' "${package}")" = "${expected}"; \
     done; \
+    test "$(jq --version)" = "jq-1.8.1"; \
     { \
         printf 'record\tname\tarchitecture\tversion\n'; \
         printf 'metadata\tschema\t-\tpasturestack.dpkg-manifest/v1\n'; \
@@ -200,6 +203,7 @@ RUN set -eux; \
     rm -rf /tmp/buildx-src /tmp/buildx.tar.gz /tmp/buildx-deps.txt /tmp/go-build-cache
 
 RUN set -eux; \
+    . /usr/share/pasturestack/manifests/ubuntu-apt.lock; \
     { \
         printf 'component\tdeclared_version\ttarget\tinstalled_sha256\tinstalled_version\n'; \
         printf 'gcc\t%s\tlinux-%s\t%s\t%s\n' \
@@ -214,6 +218,9 @@ RUN set -eux; \
         printf 'buildx\t%s\tlinux-%s\t%s\t%s\n' \
             "${BUILDX_VERSION}" "${DAPPER_HOST_ARCH}" \
             "$(sha256sum /usr/libexec/docker/cli-plugins/docker-buildx | awk '{ print $1 }')" "$(docker buildx version)"; \
+        printf 'jq\t%s\tlinux-%s\t%s\t%s\n' \
+            "${UBUNTU_APT_JQ_VERSION}" "${DAPPER_HOST_ARCH}" \
+            "$(sha256sum /usr/bin/jq | awk '{ print $1 }')" "$(jq --version)"; \
     } > /usr/share/pasturestack/manifests/dapper-toolchain.tsv; \
     touch --no-dereference --date="@${SOURCE_DATE_EPOCH}" \
         /usr/share/pasturestack/manifests/dapper-toolchain.tsv
@@ -221,7 +228,7 @@ RUN set -eux; \
 ENV DAPPER_SOURCE=/go/src/github.com/PastureStack/ecr-credential-sync/
 ENV DAPPER_OUTPUT="./bin ./dist"
 ENV DAPPER_DOCKER_SOCKET=true
-ENV DAPPER_ENV="TAG REPO IMAGE_NAMESPACE VERSION_OVERRIDE CROSS WINDOWS_DOCKER_HOST DOCKER_BUILD_NETWORK"
+ENV DAPPER_ENV="TAG REPO IMAGE_NAMESPACE VERSION_OVERRIDE CROSS WINDOWS_DOCKER_HOST DOCKER_BUILD_NETWORK RUNTIME_IMAGE_BUILD_TOKEN"
 ENV HOME=${DAPPER_SOURCE}
 WORKDIR ${DAPPER_SOURCE}
 

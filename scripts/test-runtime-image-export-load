@@ -1,0 +1,346 @@
+#!/bin/bash
+set -euo pipefail
+
+repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
+helper="${repo_root}/scripts/build-runtime-image"
+fixture_root=$(mktemp -d)
+case "$fixture_root" in /tmp/*|/var/tmp/*) ;; *) exit 1 ;; esac
+trap 'rm -rf -- "$fixture_root"' EXIT
+
+fake_bin="${fixture_root}/bin"
+state_root="${fixture_root}/state"
+temp_root="${fixture_root}/runtime-temp"
+context="${fixture_root}/context"
+mkdir -p "$fake_bin" "$state_root" "$temp_root" "$context" "${fixture_root}/results"
+printf 'FROM scratch\n' >"${context}/Dockerfile"
+
+cat >"${fake_bin}/docker" <<'EOF'
+#!/bin/bash
+set -euo pipefail
+printf '%s\n' "$*" >>"$FAKE_DOCKER_LOG"
+config_a='sha256:0000000000000000000000000000000000000000000000000000000000000000'
+config_b='sha256:1111111111111111111111111111111111111111111111111111111111111111'
+manifest='sha256:2222222222222222222222222222222222222222222222222222222222222222'
+buildkit_image='moby/buildkit:v0.32.2@sha256:28a898719c18a33f4e8000685287fa36fd0dd9560c6440227d3a732d79bb41d8'
+
+if [ "$1" = info ]; then
+  printf '29.7.2\n'
+  exit 0
+fi
+
+if [ "$1" = buildx ]; then
+  case "$2" in
+    version)
+      printf 'github.com/docker/buildx v0.36.1 1d8dde89b8aba914e05e45366770736fea1fd690\n'
+      ;;
+    create)
+      touch "$FAKE_STATE_ROOT/builder"
+      ;;
+    inspect)
+      if [ "${3-}" = --bootstrap ]; then
+        case "$FIXTURE_CASE" in
+          buildkit-no-version)
+            printf '%s\n' \
+              'Name:          fixture' \
+              'Driver:        docker-container' \
+              '' \
+              'Nodes:' \
+              'Name:                  fixture0' \
+              'Endpoint:              unix:///var/run/docker.sock' \
+              'Status:                running'
+            ;;
+          buildkit-different-versions)
+            printf '%s\n' \
+              'Name:          fixture' \
+              'Driver:        docker-container' \
+              '' \
+              'Nodes:' \
+              'Name:                  fixture0' \
+              'Endpoint:              unix:///var/run/docker.sock' \
+              'Status:                running' \
+              'BuildKit version:      v0.32.2' \
+              '' \
+              'Name:                  fixture1' \
+              'Endpoint:              unix:///var/run/docker.sock' \
+              'Status:                running' \
+              'BuildKit version:      v0.31.0'
+            ;;
+          buildkit-same-version-multinode)
+            printf '%s\n' \
+              'Name:          fixture' \
+              'Driver:        docker-container' \
+              '' \
+              'Nodes:' \
+              'Name:                  fixture0' \
+              'Endpoint:              unix:///var/run/docker.sock' \
+              'Status:                running' \
+              'BuildKit version:      v0.32.2' \
+              '' \
+              'Name:                  fixture1' \
+              'Endpoint:              unix:///var/run/docker.sock' \
+              'Status:                running' \
+              'BuildKit version:      v0.32.2'
+            ;;
+          buildkit-malformed)
+            printf '%s\n' \
+              'Name:          fixture' \
+              'Driver:        docker-container' \
+              '' \
+              'Nodes:' \
+              'Name:                  fixture0' \
+              'Endpoint:              unix:///var/run/docker.sock' \
+              'Status:                running' \
+              'BuildKit version:      v0.32.2 extra'
+            ;;
+          *)
+            printf '%s\n' \
+              'Name:          fixture' \
+              'Driver:        docker-container' \
+              '' \
+              'Nodes:' \
+              'Name:                  fixture0' \
+              'Endpoint:              unix:///var/run/docker.sock' \
+              'Status:                running' \
+              'BuildKit version:      v0.32.2'
+            ;;
+        esac
+      elif [ -e "$FAKE_STATE_ROOT/builder" ]; then
+        printf 'Name: fixture\n'
+      else
+        exit 1
+      fi
+      ;;
+    build)
+      [ "${FIXTURE_CASE}" != build-failure ] || exit 23
+      archive=
+      metadata=
+      iid=
+      shift 2
+      while [ "$#" -gt 0 ]; do
+        case "$1" in
+          --output)
+            spec=$2
+            IFS=',' read -r -a fields <<<"$spec"
+            for field in "${fields[@]}"; do
+              case "$field" in dest=*) archive=${field#dest=} ;; esac
+            done
+            shift 2
+            ;;
+          --metadata-file) metadata=$2; shift 2 ;;
+          --iidfile) iid=$2; shift 2 ;;
+          *) shift ;;
+        esac
+      done
+      [ -n "$archive" ] && [ -n "$metadata" ] && [ -n "$iid" ]
+      if [ "$FIXTURE_CASE" != missing-archive ]; then
+        printf 'deterministic docker archive fixture\n' >"$archive"
+      fi
+      if [ "$FIXTURE_CASE" = missing-digest ]; then
+        printf '{}\n' >"$metadata"
+      elif [ "$FIXTURE_CASE" = manifest-iid-fallback ]; then
+        printf '{"containerimage.digest":"%s","containerimage.descriptor":{"annotations":{"config.digest":"%s"}}}\n' \
+          "$manifest" "$config_a" >"$metadata"
+      else
+        printf '{"containerimage.digest":"%s","containerimage.config.digest":"%s"}\n' \
+          "$manifest" "$config_a" >"$metadata"
+      fi
+      if [ "$FIXTURE_CASE" = manifest-iid-fallback ]; then
+        printf '%s\n' "$manifest" >"$iid"
+      else
+        printf '%s\n' "$config_a" >"$iid"
+      fi
+      ;;
+    rm)
+      rm -f -- "$FAKE_STATE_ROOT/builder"
+      ;;
+    *) exit 64 ;;
+  esac
+  exit 0
+fi
+
+if [ "$1" = container ]; then
+  case "$2" in
+    ls)
+      [ ! -e "$FAKE_STATE_ROOT/builder" ] || printf '%s\n' "${RUNTIME_EXPECTED_CONTAINER}"
+      ;;
+    inspect)
+      case "$*" in
+        *'{{.Config.Image}}'*) printf '%s\n' "$buildkit_image" ;;
+        *'{{.State.Running}}'*) printf 'true\n' ;;
+        *) printf '[]\n' ;;
+      esac
+      ;;
+    rm) rm -f -- "$FAKE_STATE_ROOT/builder" ;;
+    *) exit 64 ;;
+  esac
+  exit 0
+fi
+
+if [ "$1" = volume ]; then
+  case "$2" in
+    ls)
+      [ ! -e "$FAKE_STATE_ROOT/builder" ] || printf '%s\n' "${RUNTIME_EXPECTED_VOLUME}"
+      ;;
+    rm) rm -f -- "$FAKE_STATE_ROOT/builder" ;;
+    *) exit 64 ;;
+  esac
+  exit 0
+fi
+
+if [ "$1" = image ]; then
+  case "$2" in
+    inspect)
+      [ -e "$FAKE_STATE_ROOT/image" ] || exit 1
+      case "$*" in
+        *'org.opencontainers.image.version'*) printf 'v3.1.0\n' ;;
+        *'org.opencontainers.image.revision'*) printf '%s\n' "$FIXTURE_REVISION" ;;
+        *'{{.Config.User}}'*) printf '10001:10001\n' ;;
+        *'{{.Id}}'*)
+          case "$FIXTURE_CASE" in
+            identity-mismatch) printf '%s\n' "$config_b" ;;
+            manifest-iid-fallback) printf '%s\n' "$manifest" ;;
+            *) printf '%s\n' "$config_a" ;;
+          esac
+          ;;
+        *) printf '[]\n' ;;
+      esac
+      ;;
+    load)
+      [ "$FIXTURE_CASE" != load-failure ] || exit 42
+      touch "$FAKE_STATE_ROOT/image"
+      printf 'Loaded image: %s\n' "$FIXTURE_IMAGE"
+      ;;
+    rm)
+      rm -f -- "$FAKE_STATE_ROOT/image"
+      ;;
+    *) exit 64 ;;
+  esac
+  exit 0
+fi
+
+exit 64
+EOF
+chmod 0755 "${fake_bin}/docker"
+
+image='local/runtime-export-fixture/ecr-credential-sync:v3.1.0'
+revision='0123456789abcdef0123456789abcdef01234567'
+archive='/tmp/runtime-image-fixture.tar'
+valid_spec="type=docker,dest=${archive},name=${image},rewrite-timestamp=true,compatibility-version=20"
+
+bash "$helper" validate-export "$valid_spec" "$archive" "$image" >/dev/null
+if bash "$helper" validate-export \
+    "type=docker,dest=${archive},name=${image},rewrite-timestamp=true,compatibility-version=20,unpack=true" \
+    "$archive" "$image" >"${fixture_root}/conflict.stdout" 2>"${fixture_root}/conflict.stderr"; then
+  printf 'expected exporter conflict fixture to fail\n' >&2
+  exit 1
+fi
+grep -F 'reason=exporter-option-conflict:rewrite-timestamp+unpack' \
+  "${fixture_root}/conflict.stderr" >/dev/null
+
+run_case() {
+  local name=$1
+  local expect_success=$2
+  local token="fixture-${name}"
+  local result="${fixture_root}/results/${name}.json"
+  local stdout="${fixture_root}/${name}.stdout"
+  local stderr="${fixture_root}/${name}.stderr"
+  local log="${fixture_root}/${name}.docker.log"
+  local builder="ecr-runtime-${token}-builder"
+  local container="buildx_buildkit_${builder}0"
+  local volume="${container}_state"
+  rm -f -- "$state_root/builder" "$state_root/image"
+  : >"$log"
+
+  set +e
+  env \
+    PATH="${fake_bin}:/usr/bin:/bin" \
+    FAKE_DOCKER_LOG="$log" \
+    FAKE_STATE_ROOT="$state_root" \
+    FIXTURE_CASE="$name" \
+    FIXTURE_IMAGE="$image" \
+    FIXTURE_REVISION="$revision" \
+    RUNTIME_EXPECTED_CONTAINER="$container" \
+    RUNTIME_EXPECTED_VOLUME="$volume" \
+    RUNTIME_IMAGE_TEMP_ROOT="$temp_root" \
+    RUNTIME_IMAGE_BUILD_TOKEN="$token" \
+    bash "$helper" build \
+      "$image" "$context" "${context}/Dockerfile" 946684800 20260808T000000Z \
+      v3.1.0 "$revision" host "$result" >"$stdout" 2>"$stderr"
+  local native_exit=$?
+  set -e
+
+  if [ "$expect_success" = true ]; then
+    [ "$native_exit" -eq 0 ] || {
+      cat "$stderr" >&2
+      printf 'expected fixture to pass: %s exit=%s\n' "$name" "$native_exit" >&2
+      exit 1
+    }
+    jq -e '
+      .status == "pass" and
+      .exporter == "docker-archive" and
+      .rewriteTimestamp == true and
+      .compatibilityVersion == "20" and
+      .buildxNativeExit == 0 and
+      .loadNativeExit == 0 and
+      ((.daemonImageIdMode == "config-digest" and .imageId == .configDigest) or
+       (.daemonImageIdMode == "manifest-digest" and .imageId == .manifestDigest)) and
+      .cleanup.scope == "exact-run-owned" and
+      .cleanup.builderContainerAbsent == true and
+      .cleanup.builderVolumeAbsent == true and
+      .cleanup.archiveAbsent == true
+    ' "$result" >/dev/null
+    [ -e "$state_root/image" ]
+    env \
+      PATH="${fake_bin}:/usr/bin:/bin" \
+      FAKE_DOCKER_LOG="$log" \
+      FAKE_STATE_ROOT="$state_root" \
+      FIXTURE_CASE="$name" \
+      FIXTURE_IMAGE="$image" \
+      FIXTURE_REVISION="$revision" \
+      RUNTIME_EXPECTED_CONTAINER="$container" \
+      RUNTIME_EXPECTED_VOLUME="$volume" \
+      docker image rm "$image" >/dev/null
+  else
+    [ "$native_exit" -ne 0 ] || {
+      printf 'expected fixture to fail: %s\n' "$name" >&2
+      exit 1
+    }
+    [ ! -e "$result" ]
+    [ ! -e "$state_root/image" ]
+  fi
+
+  [ ! -e "$state_root/builder" ]
+  [ ! -e "${temp_root}/ecr-runtime-image-${token}" ]
+  grep -F "buildx rm --force ${builder}" "$log" >/dev/null
+  if grep -F 'prune' "$log" >/dev/null; then
+    printf 'broad prune found in fixture log: %s\n' "$name" >&2
+    exit 1
+  fi
+}
+
+run_case success true
+run_case buildkit-same-version-multinode true
+run_case manifest-iid-fallback true
+run_case buildkit-no-version false
+run_case buildkit-different-versions false
+run_case buildkit-malformed false
+run_case missing-archive false
+run_case missing-digest false
+run_case load-failure false
+run_case identity-mismatch false
+run_case build-failure false
+
+grep -F 'reason=missing-or-empty-archive' "${fixture_root}/missing-archive.stderr" >/dev/null
+grep -F 'reason=missing-or-malformed-manifest-digest' "${fixture_root}/missing-digest.stderr" >/dev/null
+grep -F 'ECR_SYNC_RUNTIME_IMAGE_LOAD_NATIVE_EXIT=42' "${fixture_root}/load-failure.stderr" >/dev/null
+grep -F 'reason=image-load-failed:42' "${fixture_root}/load-failure.stderr" >/dev/null
+grep -F 'daemon-image-id-unrecognized' "${fixture_root}/identity-mismatch.stderr" >/dev/null
+grep -F 'ECR_SYNC_RUNTIME_BUILDX_BUILD_NATIVE_EXIT=23' "${fixture_root}/build-failure.stderr" >/dev/null
+grep -F 'reason=buildkit-version-readback-invalid' \
+  "${fixture_root}/buildkit-no-version.stderr" >/dev/null
+grep -F 'reason=buildkit-version-readback-count' \
+  "${fixture_root}/buildkit-different-versions.stderr" >/dev/null
+grep -F 'reason=buildkit-version-readback-invalid' \
+  "${fixture_root}/buildkit-malformed.stderr" >/dev/null
+
+printf 'ECR_SYNC_RUNTIME_IMAGE_EXPORT_FIXTURES_OK positive=4 negative=9 existing-positive=2 existing-negative=6 cleanup=exact-run-owned\n'

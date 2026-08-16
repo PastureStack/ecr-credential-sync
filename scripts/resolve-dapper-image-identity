@@ -18,6 +18,15 @@ fail() {
   exit 1
 }
 
+jq_path=$(command -v jq 2>/dev/null) || fail jq-not-found
+case "$jq_path" in
+  /*) ;;
+  *) fail jq-path-not-absolute ;;
+esac
+jq_version=$(jq --version 2>/dev/null) || fail jq-version-unavailable
+[[ "$jq_version" =~ ^jq-[0-9]+([.][0-9]+){1,2}([.-][-0-9A-Za-z.+~_]+)?$ ]] || \
+  fail malformed-jq-version
+
 for required_file in "$metadata_file" "$iid_file"; do
   [ -f "$required_file" ] || fail "missing-file:${required_file}"
 done
@@ -33,7 +42,6 @@ mapfile -t iid_lines < "$iid_file"
 iid_digest=${iid_lines[0]}
 [[ "$iid_digest" =~ $digest_pattern ]] || fail malformed-iid-digest
 [[ "$daemon_image_id" =~ $digest_pattern ]] || fail malformed-daemon-image-id
-[ "$iid_digest" = "$daemon_image_id" ] || fail iid-daemon-image-id-mismatch
 
 manifest_digest=$(
   jq -er '
@@ -47,6 +55,7 @@ manifest_digest=$(
     end
   ' "$metadata_file"
 ) || fail missing-or-malformed-manifest-digest
+[[ "$manifest_digest" =~ $digest_pattern ]] || fail malformed-manifest-digest
 
 top_level_config_record=$(
   jq -ec '
@@ -89,18 +98,56 @@ descriptor_config_record=$(
   ' "$metadata_file"
 ) || fail malformed-descriptor-config-digest
 
+top_level_present=$(jq -r '.present | if type == "boolean" then . else error("invalid") end' \
+  <<<"$top_level_config_record") || fail malformed-metadata-config-record
+descriptor_present=$(jq -r '.present | if type == "boolean" then . else error("invalid") end' \
+  <<<"$descriptor_config_record") || fail malformed-metadata-config-record
+case "$top_level_present:$descriptor_present" in
+  true:true|true:false|false:true|false:false) ;;
+  *) fail malformed-metadata-config-record ;;
+esac
+
+top_level_config=
+descriptor_config=
 metadata_cross_checks=0
-for metadata_config_record in "$top_level_config_record" "$descriptor_config_record"; do
-  if [ "$(jq -r '.present' <<<"$metadata_config_record")" = true ]; then
-    metadata_config=$(jq -r '.digest' <<<"$metadata_config_record")
-    [[ "$metadata_config" =~ $digest_pattern ]] || fail malformed-metadata-config-digest
-    [ "$metadata_config" = "$iid_digest" ] || fail metadata-iid-config-digest-mismatch
-    metadata_cross_checks=$((metadata_cross_checks + 1))
-  fi
-done
+if [ "$top_level_present" = true ]; then
+  top_level_config=$(jq -er '.digest | if type == "string" then . else error("invalid") end' \
+    <<<"$top_level_config_record") || fail malformed-metadata-config-record
+  [[ "$top_level_config" =~ $digest_pattern ]] || fail malformed-metadata-config-digest
+fi
+if [ "$descriptor_present" = true ]; then
+  descriptor_config=$(jq -er '.digest | if type == "string" then . else error("invalid") end' \
+    <<<"$descriptor_config_record") || fail malformed-metadata-config-record
+  [[ "$descriptor_config" =~ $digest_pattern ]] || fail malformed-metadata-config-digest
+fi
+if [ -n "$top_level_config" ] && [ -n "$descriptor_config" ]; then
+  [ "$top_level_config" = "$descriptor_config" ] || fail metadata-config-digest-conflict
+fi
+
+config_digest=${top_level_config:-$descriptor_config}
+[ -n "$config_digest" ] || fail missing-metadata-config-digest
+[ -z "$top_level_config" ] || metadata_cross_checks=$((metadata_cross_checks + 1))
+[ -z "$descriptor_config" ] || metadata_cross_checks=$((metadata_cross_checks + 1))
+
+if [ "$daemon_image_id" = "$config_digest" ]; then
+  daemon_id_mode=config-digest
+elif [ "$daemon_image_id" = "$manifest_digest" ]; then
+  daemon_id_mode=manifest-digest
+else
+  fail daemon-image-id-unrecognized
+fi
+
+if [ "$top_level_present" = true ]; then
+  [ "$iid_digest" = "$top_level_config" ] || fail metadata-iid-config-digest-mismatch
+  iid_mode=config-digest
+else
+  [ "$iid_digest" = "$manifest_digest" ] || fail iid-manifest-digest-mismatch
+  iid_mode=manifest-fallback
+fi
 
 umask 077
 printf '%s\n' "$manifest_digest" > "$manifest_output"
-printf '%s\n' "$iid_digest" > "$config_output"
-printf 'ECR_SYNC_DAPPER_IMAGE_IDENTITY_OK manifest=%s config=%s metadata_cross_checks=%s\n' \
-  "$manifest_digest" "$iid_digest" "$metadata_cross_checks"
+printf '%s\n' "$config_digest" > "$config_output"
+printf 'ECR_SYNC_DAPPER_IMAGE_IDENTITY_OK manifest=%s config=%s iid=%s iid_mode=%s daemon_id=%s daemon_id_mode=%s metadata_cross_checks=%s\n' \
+  "$manifest_digest" "$config_digest" "$iid_digest" "$iid_mode" \
+  "$daemon_image_id" "$daemon_id_mode" "$metadata_cross_checks"

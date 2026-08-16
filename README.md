@@ -85,8 +85,10 @@ only in internal validation evidence.
 The project uses a containerized Go 1.26.6 build environment with vendored
 dependencies. The build image compiles Docker CLI 29.7.2 from its checksum- and
 commit-locked official source with Go 1.26.6, and records both the binary hash
-and embedded Go build information. It also locks Buildx 0.36.1. A checksum-locked
-Buildx patch removes its sole compiled dependency on the legacy Docker module.
+and embedded Go build information. It also locks Buildx 0.36.1 and installs
+`jq` `1.8.1-4ubuntu2` as the fail-closed Dapper identity metadata parser. A
+checksum-locked Buildx patch removes its sole compiled dependency on the legacy
+Docker module.
 The host build client is installed by
 `docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c`
 (`v4.2.0`) as Buildx `v0.36.1`, while every Dapper builder uses BuildKit
@@ -100,7 +102,23 @@ and `checksums.txt`
 to their exact HTTPS URLs. The Ubuntu 26.04 base image is digest-pinned, and
 all direct APT packages are locked to the official `20260808T000000Z` Ubuntu
 snapshot. Each image records its resolved `dpkg` inventory, and the build image
-records the installed GCC, Go, Docker, and Buildx binaries.
+records the installed GCC, Go, Docker, Buildx, and `jq` binaries. The source
+SBOM records the Ubuntu APT lock digest, snapshot, and exact Dapper `jq` version;
+the Dapper image SBOM independently inventories the installed package.
+
+Runtime packaging uses an isolated, run-owned `docker-container` builder with
+that same pinned BuildKit image. It keeps `rewrite-timestamp=true` and
+`compatibility-version=20`, exports to a CreateNew Docker archive, records and
+reads back the archive SHA-256, and only then performs an explicit
+`docker image load`. The Buildx IID is checked as the top-level config digest
+when that field exists, or as the manifest digest when Buildx uses its documented
+fallback. The loaded daemon image ID must match every available metadata config
+source or the exported manifest digest, and the selected daemon-ID mode is
+recorded before the package is accepted. At least one metadata config source
+must exist, and all present sources must agree. Cleanup is limited to the exact
+run-owned archive, Buildx instance, builder container, state volume, and—on a
+failed load or identity gate—the newly created image reference; it never prunes
+shared builder state.
 
 If a development packaging host does not already provide the locked Buildx,
 install the verified release binary only under an empty, caller-owned run root:
@@ -128,10 +146,12 @@ These commands are local build and test targets. CI/CD publication and release
 automation are outside this proof-of-concept scope.
 
 GitHub Actions rebuilds the Linux binary and image twice without a build cache,
-using two isolated digest-pinned BuildKit builders. Each build records the
-Buildx IID as the configuration JSON digest, verifies it against the loaded
-Docker daemon image ID and every non-null metadata config digest, and separately
-records the exported manifest digest. It then compares the two image IDs,
+using two isolated digest-pinned BuildKit builders. Each build applies Buildx's
+exact IID selection rule: the top-level configuration digest when present, or
+the exported manifest digest otherwise. It requires the metadata configuration
+sources to agree, then accepts the loaded Docker daemon ID only when it equals
+that configuration digest or the exported manifest digest and records which
+engine mode was observed. It then compares the two image IDs,
 configuration digests, complete RootFS DiffID lists, creation timestamps,
 binaries, and embedded manifests. The workflow produces source, build-image,
 and runtime CycloneDX SBOMs plus Trivy reports. It never logs in to a registry,

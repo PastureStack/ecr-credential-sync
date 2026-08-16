@@ -64,6 +64,7 @@ jobs:
             toolchain/buildx-security.patch \
             toolchain/host-build-toolchain.lock \
             scripts/build \
+            scripts/build-runtime-image \
             scripts/ci \
             scripts/entry \
             scripts/install-locked-host-buildx \
@@ -75,6 +76,7 @@ jobs:
             scripts/test \
             scripts/test-dapper-image-identity \
             scripts/test-install-locked-host-buildx \
+            scripts/test-runtime-image-export-load \
             scripts/validate \
             security/openvex.json \
             .github/workflows/supply-chain.yml \
@@ -142,7 +144,7 @@ jobs:
             local metadata_file="$2"
             local iid_file="$3"
             local daemon_image_id
-            local manifest
+            local config_digest manifest manifest_digest daemon_id_mode
 
             daemon_image_id="$(docker image inspect --format '{{.Id}}' "$DAPPER_IMAGE")"
             bash scripts/resolve-dapper-image-identity \
@@ -152,9 +154,17 @@ jobs:
               "evidence/${prefix}-manifest-digest.txt" \
               "evidence/${prefix}-config-digest.txt"
             printf '%s\n' "$daemon_image_id" > "evidence/${prefix}-image-id.txt"
-            diff -u \
-              "evidence/${prefix}-config-digest.txt" \
-              "evidence/${prefix}-image-id.txt"
+            config_digest="$(cat "evidence/${prefix}-config-digest.txt")"
+            manifest_digest="$(cat "evidence/${prefix}-manifest-digest.txt")"
+            if [ "$daemon_image_id" = "$config_digest" ]; then
+              daemon_id_mode=config-digest
+            elif [ "$daemon_image_id" = "$manifest_digest" ]; then
+              daemon_id_mode=manifest-digest
+            else
+              printf 'unrecognized Dapper daemon image ID: %s\n' "$daemon_image_id" >&2
+              return 1
+            fi
+            printf '%s\n' "$daemon_id_mode" > "evidence/${prefix}-daemon-id-mode.txt"
             docker image inspect --format '{{.Created}}' "$DAPPER_IMAGE" \
               > "evidence/${prefix}-created.txt"
             test "$(cat "evidence/${prefix}-created.txt")" = "$expected_dapper_created"
@@ -192,6 +202,7 @@ jobs:
             DAPPER_IID_FILE="$PWD/evidence/dapper-first-build.iid" \
             DAPPER_NO_CACHE=true \
             DAPPER_SOURCE_DATE_EPOCH="$source_date_epoch" \
+            RUNTIME_IMAGE_BUILD_TOKEN="gha-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-first" \
             VERSION_OVERRIDE="$VERSION_OVERRIDE"
           expected_owner="$(id -u):$(id -g)"
           test "$(stat -c '%u:%g' bin/ecr-credential-sync)" = "$expected_owner"
@@ -200,6 +211,8 @@ jobs:
           first_image_id="$(docker image inspect --format '{{.Id}}' "$runtime_image")"
           printf '%s\n' "$runtime_image" > evidence/runtime-image.txt
           printf '%s\n' "$first_image_id" > evidence/runtime-image-first-id.txt
+          cp dist/runtime-image-build.json evidence/runtime-image-first-build.json
+          test "$(jq -r '.imageId' evidence/runtime-image-first-build.json)" = "$first_image_id"
           sha256sum bin/ecr-credential-sync > evidence/ecr-credential-sync-first.sha256
           capture_dapper_state dapper-first \
             evidence/dapper-first-build-metadata.json \
@@ -209,7 +222,6 @@ jobs:
           rm -rf bin dist
           docker buildx rm --force "$first_dapper_builder" >/dev/null
           first_dapper_builder=
-          docker builder prune --all --force >/dev/null
 
           create_dapper_builder "$second_dapper_builder" dapper-second
           make ci \
@@ -219,11 +231,43 @@ jobs:
             DAPPER_IID_FILE="$PWD/evidence/dapper-second-build.iid" \
             DAPPER_NO_CACHE=true \
             DAPPER_SOURCE_DATE_EPOCH="$source_date_epoch" \
+            RUNTIME_IMAGE_BUILD_TOKEN="gha-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-second" \
             VERSION_OVERRIDE="$VERSION_OVERRIDE"
           test "$(head -n 1 dist/images)" = "$runtime_image"
           second_image_id="$(docker image inspect --format '{{.Id}}' "$runtime_image")"
           printf '%s\n' "$second_image_id" > evidence/runtime-image-second-id.txt
+          cp dist/runtime-image-build.json evidence/runtime-image-second-build.json
+          test "$(jq -r '.imageId' evidence/runtime-image-second-build.json)" = "$second_image_id"
           test "$first_image_id" = "$second_image_id"
+          for result in \
+              evidence/runtime-image-first-build.json \
+              evidence/runtime-image-second-build.json; do
+            jq -e '
+              .schemaVersion == 1 and
+              .kind == "runtime-image-export-load" and
+              .status == "pass" and
+              .exporter == "docker-archive" and
+              .rewriteTimestamp == true and
+              .compatibilityVersion == "20" and
+              .buildxVersion == "v0.36.1" and
+              .buildxCommit == "1d8dde89b8aba914e05e45366770736fea1fd690" and
+              .buildkitVersion == "v0.32.2" and
+              .buildkitImage == "moby/buildkit:v0.32.2@sha256:28a898719c18a33f4e8000685287fa36fd0dd9560c6440227d3a732d79bb41d8" and
+              .buildxNativeExit == 0 and
+              .loadNativeExit == 0 and
+              ((.daemonImageIdMode == "config-digest" and .imageId == .configDigest) or
+               (.daemonImageIdMode == "manifest-digest" and .imageId == .manifestDigest)) and
+              .cleanup.scope == "exact-run-owned" and
+              .cleanup.builderNativeExit == 0 and
+              .cleanup.builderContainerAbsent == true and
+              .cleanup.builderVolumeAbsent == true and
+              .cleanup.archiveAbsent == true
+            ' "$result" >/dev/null
+          done
+          for field in archiveSha256 imageId manifestDigest configDigest daemonImageIdMode; do
+            test "$(jq -r --arg field "$field" '.[$field]' evidence/runtime-image-first-build.json)" = \
+              "$(jq -r --arg field "$field" '.[$field]' evidence/runtime-image-second-build.json)"
+          done
           sha256sum bin/ecr-credential-sync > evidence/ecr-credential-sync-second.sha256
           capture_dapper_state dapper-second \
             evidence/dapper-second-build-metadata.json \
@@ -233,6 +277,7 @@ jobs:
             evidence/ecr-credential-sync-second.sha256
           for artifact in \
               image-id.txt \
+              daemon-id-mode.txt \
               buildkit-image.txt \
               buildkit-version.txt \
               manifest-digest.txt \
@@ -337,12 +382,13 @@ jobs:
               next
             }
             $4 !~ /^[0-9a-f]+$/ || length($4) != 64 || $5 == "" { exit 1 }
-            END { if (NR != 5) exit 1 }
+            END { if (NR != 6) exit 1 }
           ' evidence/dapper-toolchain.tsv
           grep -F $'gcc\t4:15.2.0-5ubuntu1\tlinux-amd64\t' evidence/dapper-toolchain.tsv >/dev/null
           grep -F $'go\t1.26.6\tlinux-amd64\t' evidence/dapper-toolchain.tsv >/dev/null
           grep -F $'docker\t29.7.2\tlinux-amd64\t' evidence/dapper-toolchain.tsv >/dev/null
           grep -F $'buildx\t0.36.1\tlinux-amd64\t' evidence/dapper-toolchain.tsv >/dev/null
+          grep -F $'jq\t1.8.1-4ubuntu2\tlinux-amd64\t' evidence/dapper-toolchain.tsv >/dev/null
           docker run --rm --entrypoint cat "$DAPPER_IMAGE" \
             /usr/share/pasturestack/manifests/docker-cli-build.tsv \
             > evidence/docker-cli-build.tsv
@@ -449,6 +495,18 @@ jobs:
 
           python3 scripts/generate-source-sbom.py \
             --output evidence/source.cdx.json
+          jq -e '
+            [.metadata.properties[]?
+              | select(.name == "pasturestack:dapper-jq-version")
+              | select(.value == "1.8.1-4ubuntu2")
+            ] | length == 1
+          ' evidence/source.cdx.json >/dev/null
+          jq -e '
+            [.metadata.properties[]?
+              | select(.name == "pasturestack:runtime-image-export")
+              | select(.value == "docker-archive-rewrite-timestamp+explicit-image-load")
+            ] | length == 1
+          ' evidence/source.cdx.json >/dev/null
           cp security/openvex.json evidence/source.openvex.json
           docker run --rm \
             --volume "$PWD/evidence:/evidence" \
@@ -482,6 +540,12 @@ jobs:
               | select(.name == "stdlib")
               | select((.version // "") | test("^(go|v)?1\\.26\\.5$"))
             ] | length == 0
+          ' evidence/dapper.cdx.json >/dev/null
+          jq -e '
+            [.components[]?
+              | select(.name == "jq")
+              | select(.version == "1.8.1-4ubuntu2")
+            ] | length == 1
           ' evidence/dapper.cdx.json >/dev/null
 
       - name: Enforce source, builder, and runtime security policy
@@ -649,5 +713,4 @@ jobs:
               docker image rm -f "$image" >/dev/null
             fi
           done
-          docker builder prune --all --force >/dev/null
           rm -rf bin dist evidence "$RUNNER_TEMP/trivy-cache"

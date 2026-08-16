@@ -1,0 +1,509 @@
+#!/bin/bash
+# Modified by PastureStack contributors for independent maintenance and rebranding.
+set -euo pipefail
+
+digest_pattern='^sha256:[0-9a-f]{64}$'
+
+fail() {
+  printf 'ECR_SYNC_RUNTIME_IMAGE_EXPORT_INVALID reason=%s\n' "$1" >&2
+  exit 1
+}
+
+validate_export_spec() {
+  local spec=$1
+  local expected_archive=$2
+  local expected_image=$3
+  local field key value
+  local -a fields
+  local -A seen=()
+
+  IFS=',' read -r -a fields <<<"$spec"
+  for field in "${fields[@]}"; do
+    [[ "$field" == *=* ]] || fail exporter-option-missing-value
+    key=${field%%=*}
+    value=${field#*=}
+    [ -n "$key" ] && [ -n "$value" ] || fail exporter-option-empty-key-or-value
+    [ -z "${seen[$key]+x}" ] || fail "exporter-option-duplicate:${key}"
+    seen[$key]=1
+    case "$key" in
+      unpack|load) fail "exporter-option-conflict:rewrite-timestamp+${key}" ;;
+      type) [ "$value" = docker ] || fail exporter-type-not-docker ;;
+      dest) [ "$value" = "$expected_archive" ] || fail exporter-destination-mismatch ;;
+      name) [ "$value" = "$expected_image" ] || fail exporter-image-name-mismatch ;;
+      rewrite-timestamp) [ "$value" = true ] || fail rewrite-timestamp-not-enabled ;;
+      compatibility-version) [ "$value" = 20 ] || fail compatibility-version-not-20 ;;
+      *) fail "unexpected-exporter-option:${key}" ;;
+    esac
+  done
+  [ "${#fields[@]}" -eq 5 ] || fail exporter-option-count
+  for key in type dest name rewrite-timestamp compatibility-version; do
+    [ -n "${seen[$key]+x}" ] || fail "missing-exporter-option:${key}"
+  done
+}
+
+usage() {
+  printf '%s\n' \
+    "usage: $0 validate-export EXPORT_SPEC EXPECTED_ARCHIVE EXPECTED_IMAGE" \
+    "       $0 build IMAGE CONTEXT DOCKERFILE SOURCE_DATE_EPOCH UBUNTU_APT_SNAPSHOT VERSION REVISION NETWORK RESULT_OUTPUT" >&2
+  exit 64
+}
+
+if [ "${1-}" = validate-export ]; then
+  [ "$#" -eq 4 ] || usage
+  validate_export_spec "$2" "$3" "$4"
+  printf 'ECR_SYNC_RUNTIME_IMAGE_EXPORT_OPTIONS_OK\n'
+  exit 0
+fi
+
+[ "${1-}" = build ] || usage
+[ "$#" -eq 10 ] || usage
+
+image=$2
+context=$3
+dockerfile=$4
+source_date_epoch=$5
+ubuntu_apt_snapshot=$6
+version=$7
+revision=$8
+network=$9
+result_output=${10}
+
+repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
+resolver="${repo_root}/scripts/resolve-dapper-image-identity"
+toolchain_lock="${repo_root}/toolchain/host-build-toolchain.lock"
+ubuntu_apt_lock="${repo_root}/ubuntu-apt.lock"
+
+[ -f "$resolver" ] || fail missing-identity-resolver
+[ -f "$toolchain_lock" ] || fail missing-host-toolchain-lock
+[ -f "$ubuntu_apt_lock" ] || fail missing-ubuntu-apt-lock
+# shellcheck disable=SC1090
+source "$toolchain_lock"
+# shellcheck disable=SC1090
+source "$ubuntu_apt_lock"
+
+[ "${HOST_BUILDX_VERSION-}" = v0.36.1 ] || fail locked-buildx-version-mismatch
+[ "${HOST_BUILDX_COMMIT-}" = 1d8dde89b8aba914e05e45366770736fea1fd690 ] || \
+  fail locked-buildx-commit-mismatch
+[ "${HOST_BUILDKIT_VERSION-}" = v0.32.2 ] || fail locked-buildkit-version-mismatch
+[ "${HOST_BUILDKIT_IMAGE-}" = 'moby/buildkit:v0.32.2@sha256:28a898719c18a33f4e8000685287fa36fd0dd9560c6440227d3a732d79bb41d8' ] || \
+  fail locked-buildkit-image-mismatch
+[ "$ubuntu_apt_snapshot" = "${UBUNTU_APT_LOCKED_SNAPSHOT-}" ] || \
+  fail ubuntu-apt-snapshot-mismatch
+
+case "$image" in
+  *','*|*$'\n'*|*$'\r'*|'') fail invalid-image-reference ;;
+esac
+[[ "$source_date_epoch" =~ ^[0-9]+$ ]] || fail invalid-source-date-epoch
+[[ "$ubuntu_apt_snapshot" =~ ^[0-9]{8}T[0-9]{6}Z$ ]] || fail invalid-ubuntu-apt-snapshot
+[[ "$version" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]*$ ]] || fail invalid-version
+[[ "$revision" =~ ^[0-9a-f]{40}$ ]] || fail invalid-revision
+case "$network" in host|default|none) ;; *) fail invalid-network-mode ;; esac
+
+context=$(realpath -e -- "$context") || fail context-realpath-failed
+dockerfile=$(realpath -e -- "$dockerfile") || fail dockerfile-realpath-failed
+[ -d "$context" ] && [ ! -L "$context" ] || fail context-not-real-directory
+[ -f "$dockerfile" ] && [ ! -L "$dockerfile" ] || fail dockerfile-not-regular-file
+case "$dockerfile" in "$context"/*) ;; *) fail dockerfile-outside-context ;; esac
+case "$result_output" in /*) ;; *) fail result-output-not-absolute ;; esac
+[ ! -e "$result_output" ] && [ ! -L "$result_output" ] || fail result-output-already-exists
+result_parent=$(realpath -e -- "$(dirname "$result_output")") || fail result-parent-realpath-failed
+[ -d "$result_parent" ] && [ ! -L "$result_parent" ] || fail result-parent-not-real-directory
+[ "${result_parent}/$(basename "$result_output")" = "$result_output" ] || fail result-output-not-canonical
+
+for command_name in docker jq mktemp realpath sha256sum stat awk; do
+  command_path=$(command -v "$command_name" 2>/dev/null) || fail "command-not-found:${command_name}"
+  case "$command_path" in /*) ;; *) fail "command-path-not-absolute:${command_name}" ;; esac
+done
+docker_path=$(command -v docker)
+jq_path=$(command -v jq)
+
+temp_parent=${RUNTIME_IMAGE_TEMP_ROOT:-${TMPDIR:-/tmp}}
+temp_parent=$(realpath -e -- "$temp_parent") || fail temp-parent-realpath-failed
+[ -d "$temp_parent" ] && [ ! -L "$temp_parent" ] || fail temp-parent-not-real-directory
+[ "$temp_parent" != / ] || fail unsafe-temp-parent
+
+token=${RUNTIME_IMAGE_BUILD_TOKEN:-}
+if [ -n "$token" ]; then
+  [[ "$token" =~ ^[a-z0-9][a-z0-9-]{0,39}$ ]] || fail invalid-run-token
+  run_root="${temp_parent}/ecr-runtime-image-${token}"
+  mkdir -m 0700 -- "$run_root" || fail run-root-create-failed
+else
+  run_root=$(mktemp -d -p "$temp_parent" 'ecr-runtime-image-auto-XXXXXXXXXX') || \
+    fail run-root-create-failed
+  token=${run_root##*/ecr-runtime-image-}
+  token=${token,,}
+  [[ "$token" =~ ^[a-z0-9][a-z0-9-]{0,39}$ ]] || fail generated-run-token-invalid
+fi
+
+canonical_run_root=$(realpath -e -- "$run_root") || fail run-root-realpath-failed
+[ "$canonical_run_root" = "$run_root" ] || fail run-root-not-canonical
+[ -d "$run_root" ] && [ ! -L "$run_root" ] || fail run-root-not-real-directory
+[ "$(stat -c '%a' -- "$run_root")" = 700 ] || fail run-root-mode-not-0700
+run_root_identity=$(stat -c '%d:%i' -- "$run_root") || fail run-root-identity-unavailable
+
+builder="ecr-runtime-${token}-builder"
+builder_container="buildx_buildkit_${builder}0"
+builder_volume="${builder_container}_state"
+archive="${run_root}/runtime-image.tar"
+archive_hash_file="${run_root}/runtime-image.tar.sha256"
+metadata_file="${run_root}/runtime-image-metadata.json"
+iid_file="${run_root}/runtime-image.iid"
+manifest_file="${run_root}/runtime-image-manifest.txt"
+config_file="${run_root}/runtime-image-config.txt"
+inspect_file="${run_root}/buildx-inspect.txt"
+export_spec="type=docker,dest=${archive},name=${image},rewrite-timestamp=true,compatibility-version=20"
+export BUILDX_CONFIG="${run_root}/buildx-config"
+
+validate_export_spec "$export_spec" "$archive" "$image"
+for output_path in \
+    "$archive" "$archive_hash_file" "$metadata_file" "$iid_file" \
+    "$manifest_file" "$config_file" "$inspect_file"; do
+  [ ! -e "$output_path" ] && [ ! -L "$output_path" ] || fail run-output-already-exists
+done
+
+builder_reserved=0
+image_created=0
+preserve_image=0
+result_created=0
+expected_config_digest=
+owned_image_id=
+
+exact_container_absent() {
+  local names
+  names=$(
+    "$docker_path" container ls -a \
+      --filter "name=^/${builder_container}$" --format '{{.Names}}'
+  ) || return 1
+  [ -z "$names" ]
+}
+
+exact_volume_absent() {
+  local names
+  names=$(
+    "$docker_path" volume ls \
+      --filter "name=^${builder_volume}$" --format '{{.Name}}'
+  ) || return 1
+  [ -z "$names" ]
+}
+
+remove_builder() {
+  local remove_exit=0
+  [ "$builder_reserved" -eq 1 ] || return 0
+  set +e
+  "$docker_path" buildx rm --force "$builder"
+  remove_exit=$?
+  set -e
+  printf 'ECR_SYNC_RUNTIME_BUILDER_REMOVE_NATIVE_EXIT=%s builder=%s\n' \
+    "$remove_exit" "$builder" >&2
+  [ "$remove_exit" -eq 0 ] || return 1
+  exact_container_absent || return 1
+  exact_volume_absent || return 1
+  builder_reserved=0
+}
+
+remove_run_root() {
+  local current_identity current_realpath
+  [ -n "${run_root:-}" ] || return 0
+  [ -d "$run_root" ] && [ ! -L "$run_root" ] || return 1
+  current_realpath=$(realpath -e -- "$run_root") || return 1
+  current_identity=$(stat -c '%d:%i' -- "$run_root") || return 1
+  [ "$current_realpath" = "$canonical_run_root" ] || return 1
+  [ "$current_identity" = "$run_root_identity" ] || return 1
+  rm -rf -- "$run_root" || return 1
+  [ ! -e "$run_root" ] && [ ! -L "$run_root" ] || return 1
+  run_root=
+}
+
+remove_image_if_owned() {
+  local current_id remove_exit
+  [ "$image_created" -eq 1 ] || return 0
+  current_id=$("$docker_path" image inspect --format '{{.Id}}' "$image" 2>/dev/null) || return 1
+  [[ "$current_id" =~ $digest_pattern ]] || return 1
+  if [ -n "$owned_image_id" ] && [ "$current_id" != "$owned_image_id" ]; then
+    printf 'ECR_SYNC_RUNTIME_IMAGE_CLEANUP_REFUSED reason=image-identity-changed image=%s expected=%s actual=%s\n' \
+      "$image" "$owned_image_id" "$current_id" >&2
+    return 1
+  fi
+  set +e
+  "$docker_path" image rm "$image"
+  remove_exit=$?
+  set -e
+  printf 'ECR_SYNC_RUNTIME_IMAGE_REMOVE_NATIVE_EXIT=%s image=%s\n' \
+    "$remove_exit" "$image" >&2
+  [ "$remove_exit" -eq 0 ] || return 1
+  if "$docker_path" image inspect "$image" >/dev/null 2>&1; then
+    return 1
+  fi
+  image_created=0
+}
+
+cleanup_on_exit() {
+  local original_exit=$?
+  local cleanup_exit=0
+  trap - EXIT INT TERM
+  set +e
+  if [ "$preserve_image" -ne 1 ]; then
+    remove_image_if_owned || cleanup_exit=1
+  fi
+  remove_builder || cleanup_exit=1
+  remove_run_root || cleanup_exit=1
+  if [ "$result_created" -eq 1 ] && [ "$preserve_image" -ne 1 ]; then
+    rm -f -- "$result_output" || cleanup_exit=1
+  fi
+  if [ "$original_exit" -eq 0 ] && [ "$cleanup_exit" -ne 0 ]; then
+    original_exit=1
+  fi
+  exit "$original_exit"
+}
+trap cleanup_on_exit EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+docker_server_version=$("$docker_path" info --format '{{.ServerVersion}}') || fail docker-daemon-unavailable
+[ -n "$docker_server_version" ] || fail docker-server-version-empty
+if "$docker_path" image inspect "$image" >/dev/null 2>&1; then
+  fail target-image-already-exists
+fi
+exact_container_absent || fail builder-container-already-exists
+exact_volume_absent || fail builder-volume-already-exists
+
+set +e
+buildx_version_output=$("$docker_path" buildx version 2>&1)
+buildx_version_exit=$?
+set -e
+printf 'ECR_SYNC_RUNTIME_BUILDX_VERSION_NATIVE_EXIT=%s\n' "$buildx_version_exit" >&2
+[ "$buildx_version_exit" -eq 0 ] || fail buildx-version-command-failed
+read -r buildx_module buildx_version buildx_commit buildx_extra <<<"$buildx_version_output"
+[ "$buildx_module" = github.com/docker/buildx ] || fail buildx-version-module-mismatch
+[ "$buildx_version" = "$HOST_BUILDX_VERSION" ] || fail buildx-version-mismatch
+[ "$buildx_commit" = "$HOST_BUILDX_COMMIT" ] || fail buildx-commit-mismatch
+[ -z "${buildx_extra:-}" ] || fail buildx-version-extra-fields
+
+builder_reserved=1
+set +e
+"$docker_path" buildx create \
+  --driver docker-container \
+  --driver-opt "image=${HOST_BUILDKIT_IMAGE}" \
+  --driver-opt "network=${network}" \
+  --name "$builder" >/dev/null
+builder_create_exit=$?
+set -e
+printf 'ECR_SYNC_RUNTIME_BUILDER_CREATE_NATIVE_EXIT=%s builder=%s\n' \
+  "$builder_create_exit" "$builder" >&2
+[ "$builder_create_exit" -eq 0 ] || fail builder-create-failed
+
+set +e
+"$docker_path" buildx inspect --bootstrap "$builder" >"$inspect_file"
+builder_bootstrap_exit=$?
+set -e
+printf 'ECR_SYNC_RUNTIME_BUILDER_BOOTSTRAP_NATIVE_EXIT=%s builder=%s\n' \
+  "$builder_bootstrap_exit" "$builder" >&2
+[ "$builder_bootstrap_exit" -eq 0 ] || fail builder-bootstrap-failed
+set +e
+buildkit_versions_output=$(
+  awk '
+    $1 == "BuildKit" && $2 ~ /^version/ {
+      if ($2 != "version:" || NF != 3) {
+        malformed = 1
+        next
+      }
+      found = 1
+      versions[$3] = 1
+    }
+    END {
+      if (malformed || !found) {
+        exit 1
+      }
+      for (version in versions) {
+        print version
+      }
+    }
+  ' "$inspect_file"
+)
+buildkit_version_readback_exit=$?
+set -e
+[ "$buildkit_version_readback_exit" -eq 0 ] || fail buildkit-version-readback-invalid
+mapfile -t buildkit_versions <<<"$buildkit_versions_output"
+[ "${#buildkit_versions[@]}" -eq 1 ] || fail buildkit-version-readback-count
+[ "${buildkit_versions[0]}" = "$HOST_BUILDKIT_VERSION" ] || fail buildkit-version-readback-mismatch
+[ "$("$docker_path" container inspect --format '{{.Config.Image}}' "$builder_container")" = "$HOST_BUILDKIT_IMAGE" ] || \
+  fail buildkit-image-readback-mismatch
+[ "$("$docker_path" container inspect --format '{{.State.Running}}' "$builder_container")" = true ] || \
+  fail buildkit-container-not-running
+
+set +e
+SOURCE_DATE_EPOCH="$source_date_epoch" "$docker_path" buildx build \
+  --builder "$builder" \
+  --metadata-file "$metadata_file" \
+  --iidfile "$iid_file" \
+  --output "$export_spec" \
+  --pull \
+  --network "$network" \
+  --provenance=false \
+  --sbom=false \
+  --build-arg "UBUNTU_APT_SNAPSHOT=${ubuntu_apt_snapshot}" \
+  --build-arg "SOURCE_DATE_EPOCH=${source_date_epoch}" \
+  --build-arg "VERSION=${version}" \
+  --build-arg "REVISION=${revision}" \
+  --tag "$image" \
+  --file "$dockerfile" \
+  "$context"
+buildx_native_exit=$?
+set -e
+printf 'ECR_SYNC_RUNTIME_BUILDX_BUILD_NATIVE_EXIT=%s builder=%s\n' \
+  "$buildx_native_exit" "$builder" >&2
+[ "$buildx_native_exit" -eq 0 ] || fail "buildx-build-failed:${buildx_native_exit}"
+
+[ -f "$archive" ] && [ ! -L "$archive" ] && [ -s "$archive" ] || fail missing-or-empty-archive
+[ -f "$metadata_file" ] && [ ! -L "$metadata_file" ] && [ -s "$metadata_file" ] || \
+  fail missing-or-empty-metadata
+[ -f "$iid_file" ] && [ ! -L "$iid_file" ] && [ -s "$iid_file" ] || fail missing-or-empty-iid
+archive_bytes=$(stat -c '%s' -- "$archive") || fail archive-size-readback-failed
+archive_sha256=$(sha256sum -- "$archive") || fail archive-hash-failed
+read -r archive_sha256 archive_hashed_path archive_hash_extra <<<"$archive_sha256"
+[[ "$archive_sha256" =~ ^[0-9a-f]{64}$ ]] || fail malformed-archive-hash
+[ "$archive_hashed_path" = "$archive" ] || fail archive-hash-path-mismatch
+[ -z "${archive_hash_extra:-}" ] || fail archive-hash-extra-fields
+(
+  set -o noclobber
+  printf '%s  %s\n' "$archive_sha256" "$(basename "$archive")" >"$archive_hash_file"
+) || fail archive-hash-output-create-failed
+(cd "$run_root" && sha256sum --check "$(basename "$archive_hash_file")") || \
+  fail archive-hash-readback-failed
+
+set +e
+"$docker_path" image load --input "$archive"
+load_native_exit=$?
+set -e
+printf 'ECR_SYNC_RUNTIME_IMAGE_LOAD_NATIVE_EXIT=%s image=%s\n' \
+  "$load_native_exit" "$image" >&2
+if [ "$load_native_exit" -ne 0 ]; then
+  if partial_image_id=$("$docker_path" image inspect --format '{{.Id}}' "$image" 2>/dev/null); then
+    [[ "$partial_image_id" =~ $digest_pattern ]] || fail malformed-partial-image-id
+    image_created=1
+    owned_image_id=$partial_image_id
+  fi
+  fail "image-load-failed:${load_native_exit}"
+fi
+image_created=1
+
+daemon_image_id=$("$docker_path" image inspect --format '{{.Id}}' "$image") || \
+  fail loaded-image-not-inspectable
+[[ "$daemon_image_id" =~ $digest_pattern ]] || fail malformed-loaded-image-id
+owned_image_id=$daemon_image_id
+expected_config_digest=$(head -n 1 "$iid_file") || fail iid-readback-failed
+[[ "$expected_config_digest" =~ $digest_pattern ]] || fail missing-or-malformed-iid-digest
+
+bash "$resolver" \
+  "$metadata_file" "$iid_file" "$daemon_image_id" \
+  "$manifest_file" "$config_file"
+manifest_digest=$(cat "$manifest_file") || fail manifest-digest-readback-failed
+config_digest=$(cat "$config_file") || fail config-digest-readback-failed
+[[ "$manifest_digest" =~ $digest_pattern ]] || fail missing-or-malformed-manifest-digest
+[[ "$config_digest" =~ $digest_pattern ]] || fail missing-or-malformed-config-digest
+if [ "$daemon_image_id" = "$config_digest" ]; then
+  daemon_image_id_mode=config-digest
+elif [ "$daemon_image_id" = "$manifest_digest" ]; then
+  daemon_image_id_mode=manifest-digest
+else
+  fail daemon-image-id-unrecognized-after-resolver
+fi
+[ "$("$docker_path" image inspect --format '{{index .Config.Labels "org.opencontainers.image.version"}}' "$image")" = "$version" ] || \
+  fail runtime-version-label-mismatch
+[ "$("$docker_path" image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$image")" = "$revision" ] || \
+  fail runtime-revision-label-mismatch
+[ "$("$docker_path" image inspect --format '{{.Config.User}}' "$image")" = 10001:10001 ] || \
+  fail runtime-user-mismatch
+[ "$(sha256sum -- "$archive" | awk '{ print $1 }')" = "$archive_sha256" ] || \
+  fail archive-changed-after-load
+
+result_json=$(
+  "$jq_path" -cn \
+    --arg image "$image" \
+    --arg imageId "$daemon_image_id" \
+    --arg manifestDigest "$manifest_digest" \
+    --arg configDigest "$config_digest" \
+    --arg daemonImageIdMode "$daemon_image_id_mode" \
+    --arg archiveSha256 "$archive_sha256" \
+    --argjson archiveBytes "$archive_bytes" \
+    --arg runToken "$token" \
+    --arg builder "$builder" \
+    --arg buildxVersion "$buildx_version" \
+    --arg buildxCommit "$buildx_commit" \
+    --arg buildkitVersion "$HOST_BUILDKIT_VERSION" \
+    --arg buildkitImage "$HOST_BUILDKIT_IMAGE" \
+    '{
+      schemaVersion: 1,
+      kind: "runtime-image-export-load",
+      status: "pass",
+      image: $image,
+      imageId: $imageId,
+      manifestDigest: $manifestDigest,
+      configDigest: $configDigest,
+      daemonImageIdMode: $daemonImageIdMode,
+      archiveSha256: $archiveSha256,
+      archiveBytes: $archiveBytes,
+      runToken: $runToken,
+      builder: $builder,
+      buildxVersion: $buildxVersion,
+      buildxCommit: $buildxCommit,
+      buildkitVersion: $buildkitVersion,
+      buildkitImage: $buildkitImage,
+      exporter: "docker-archive",
+      rewriteTimestamp: true,
+      compatibilityVersion: "20",
+      buildxNativeExit: 0,
+      loadNativeExit: 0,
+      cleanup: {
+        scope: "exact-run-owned",
+        builderNativeExit: 0,
+        builderContainerAbsent: true,
+        builderVolumeAbsent: true,
+        archiveAbsent: true
+      }
+    }'
+) || fail result-json-generation-failed
+
+remove_builder || fail builder-cleanup-failed
+remove_run_root || fail run-root-cleanup-failed
+(
+  umask 077
+  set -o noclobber
+  printf '%s\n' "$result_json" >"$result_output"
+) || fail result-output-create-failed
+result_created=1
+"$jq_path" -e \
+  --arg image "$image" \
+  --arg imageId "$daemon_image_id" \
+  --arg manifestDigest "$manifest_digest" \
+  --arg configDigest "$config_digest" \
+  --arg daemonImageIdMode "$daemon_image_id_mode" \
+  --arg archiveSha256 "$archive_sha256" '
+    .schemaVersion == 1 and
+    .kind == "runtime-image-export-load" and
+    .status == "pass" and
+    .image == $image and
+    .imageId == $imageId and
+    .manifestDigest == $manifestDigest and
+    .configDigest == $configDigest and
+    .daemonImageIdMode == $daemonImageIdMode and
+    (($daemonImageIdMode == "config-digest" and .imageId == .configDigest) or
+     ($daemonImageIdMode == "manifest-digest" and .imageId == .manifestDigest)) and
+    .archiveSha256 == $archiveSha256 and
+    .exporter == "docker-archive" and
+    .rewriteTimestamp == true and
+    .compatibilityVersion == "20" and
+    .buildxNativeExit == 0 and
+    .loadNativeExit == 0 and
+    .cleanup.scope == "exact-run-owned" and
+    .cleanup.builderNativeExit == 0 and
+    .cleanup.builderContainerAbsent == true and
+    .cleanup.builderVolumeAbsent == true and
+    .cleanup.archiveAbsent == true
+  ' "$result_output" >/dev/null || fail result-output-readback-failed
+
+preserve_image=1
+trap - EXIT INT TERM
+printf 'ECR_SYNC_RUNTIME_IMAGE_EXPORT_LOAD_OK image=%s image_id=%s image_id_mode=%s manifest=%s config=%s archive_sha256=%s buildx=%s buildkit=%s\n' \
+  "$image" "$daemon_image_id" "$daemon_image_id_mode" "$manifest_digest" "$config_digest" "$archive_sha256" \
+  "$buildx_version" "$HOST_BUILDKIT_VERSION"

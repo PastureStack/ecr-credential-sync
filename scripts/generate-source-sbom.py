@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate a deterministic CycloneDX inventory from the legacy vendor lock."""
+"""Generate a deterministic CycloneDX inventory from source and toolchain locks."""
 
 from __future__ import annotations
 
@@ -24,6 +24,20 @@ HOST_TOOLCHAIN_KEYS = (
     "HOST_BUILDKIT_IMAGE",
     "SETUP_BUILDX_ACTION_VERSION",
     "SETUP_BUILDX_ACTION_COMMIT",
+)
+
+UBUNTU_APT_KEYS = (
+    "UBUNTU_APT_LOCKED_SNAPSHOT",
+    "UBUNTU_APT_BASH_VERSION",
+    "UBUNTU_APT_CA_CERTIFICATES_VERSION",
+    "UBUNTU_APT_CURL_VERSION",
+    "UBUNTU_APT_GCC_VERSION",
+    "UBUNTU_APT_GIT_VERSION",
+    "UBUNTU_APT_JQ_VERSION",
+    "UBUNTU_APT_LIBC6_DEV_VERSION",
+    "UBUNTU_APT_MAKE_VERSION",
+    "UBUNTU_APT_TAR_VERSION",
+    "UBUNTU_APT_XZ_UTILS_VERSION",
 )
 
 
@@ -65,6 +79,34 @@ def parse_host_toolchain_lock(path: Path) -> tuple[dict[str, str], str]:
     return values, lock_digest
 
 
+def parse_ubuntu_apt_lock(path: Path) -> tuple[dict[str, str], str]:
+    lock_text = path.read_text(encoding="utf-8")
+    canonical_text = lock_text.replace("\r\n", "\n").replace("\r", "\n")
+    values: dict[str, str] = {}
+    for raw_line in canonical_text.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        key, separator, quoted_value = line.partition("=")
+        if (
+            not separator
+            or key not in UBUNTU_APT_KEYS
+            or len(quoted_value) < 2
+            or not quoted_value.startswith("'")
+            or not quoted_value.endswith("'")
+            or "'" in quoted_value[1:-1]
+        ):
+            raise ValueError(f"invalid Ubuntu APT lock entry: {raw_line!r}")
+        if key in values:
+            raise ValueError(f"duplicate Ubuntu APT lock entry: {key}")
+        values[key] = quoted_value[1:-1]
+    missing = sorted(set(UBUNTU_APT_KEYS) - values.keys())
+    if missing:
+        raise ValueError(f"Ubuntu APT lock is missing keys: {', '.join(missing)}")
+    lock_digest = hashlib.sha256(canonical_text.encode("utf-8")).hexdigest()
+    return values, lock_digest
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--lock", type=Path, default=Path("vendor.conf"))
@@ -72,6 +114,11 @@ def main() -> int:
         "--host-toolchain-lock",
         type=Path,
         default=Path("toolchain/host-build-toolchain.lock"),
+    )
+    parser.add_argument(
+        "--ubuntu-apt-lock",
+        type=Path,
+        default=Path("ubuntu-apt.lock"),
     )
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
@@ -83,9 +130,11 @@ def main() -> int:
     host_toolchain, host_toolchain_digest = parse_host_toolchain_lock(
         args.host_toolchain_lock
     )
+    ubuntu_apt, ubuntu_apt_digest = parse_ubuntu_apt_lock(args.ubuntu_apt_lock)
     serial = uuid.uuid5(
         uuid.NAMESPACE_URL,
-        f"pasturestack:ecr-credential-sync:{lock_digest}:{host_toolchain_digest}",
+        "pasturestack:ecr-credential-sync:"
+        f"{lock_digest}:{host_toolchain_digest}:{ubuntu_apt_digest}",
     )
 
     components = []
@@ -124,6 +173,22 @@ def main() -> int:
                 {
                     "name": "pasturestack:host-build-toolchain-lock-sha256",
                     "value": host_toolchain_digest,
+                },
+                {
+                    "name": "pasturestack:ubuntu-apt-lock-sha256",
+                    "value": ubuntu_apt_digest,
+                },
+                {
+                    "name": "pasturestack:ubuntu-apt-snapshot",
+                    "value": ubuntu_apt["UBUNTU_APT_LOCKED_SNAPSHOT"],
+                },
+                {
+                    "name": "pasturestack:dapper-jq-version",
+                    "value": ubuntu_apt["UBUNTU_APT_JQ_VERSION"],
+                },
+                {
+                    "name": "pasturestack:runtime-image-export",
+                    "value": "docker-archive-rewrite-timestamp+explicit-image-load",
                 },
                 {
                     "name": "pasturestack:host-buildx-version",

@@ -35,6 +35,15 @@ expect_failure() {
   fi
 }
 
+expect_failure_reason() {
+  local name=$1
+  local reason=$2
+  shift 2
+  expect_failure "$name" "$@"
+  grep -Fx "ECR_SYNC_DAPPER_IMAGE_IDENTITY_INVALID reason=${reason}" \
+    "$fixture_root/${name}.stderr" >/dev/null
+}
+
 cat > "$fixture_root/null-top-level.json" <<EOF
 {
   "containerimage.digest": "${manifest_digest}",
@@ -44,18 +53,50 @@ cat > "$fixture_root/null-top-level.json" <<EOF
   }
 }
 EOF
-printf '%s\n' "$config_a" > "$fixture_root/valid.iid"
+printf '%s\n' "$manifest_digest" > "$fixture_root/valid.iid"
+printf '%s\n' "$config_a" > "$fixture_root/config.iid"
+
+expect_failure_reason missing-jq jq-not-found \
+  env PATH=/nonexistent /bin/bash "$resolver" \
+    "$fixture_root/null-top-level.json" "$fixture_root/valid.iid" "$config_a" \
+    "$fixture_root/missing-jq-manifest.txt" "$fixture_root/missing-jq-config.txt"
+
+mkdir "$fixture_root/wrong-jq-bin"
+cat > "$fixture_root/wrong-jq-bin/jq" <<'EOF'
+#!/bin/bash
+if [ "${1-}" = --version ]; then
+  printf 'not-jq\n'
+  exit 0
+fi
+printf 'not-a-digest\n'
+EOF
+chmod 0755 "$fixture_root/wrong-jq-bin/jq"
+expect_failure_reason wrong-jq-version malformed-jq-version \
+  env PATH="$fixture_root/wrong-jq-bin:/usr/bin:/bin" /bin/bash "$resolver" \
+    "$fixture_root/null-top-level.json" "$fixture_root/valid.iid" "$config_a" \
+    "$fixture_root/wrong-jq-manifest.txt" "$fixture_root/wrong-jq-config.txt"
+
 run_resolver null-top-level \
-  "$fixture_root/null-top-level.json" "$fixture_root/valid.iid" "$config_a" >/dev/null
+  "$fixture_root/null-top-level.json" "$fixture_root/valid.iid" "$manifest_digest" >/dev/null
 test "$(cat "$fixture_root/null-top-level-manifest.txt")" = "$manifest_digest"
 test "$(cat "$fixture_root/null-top-level-config.txt")" = "$config_a"
 
 cat > "$fixture_root/config-metadata-absent.json" <<EOF
 {"containerimage.digest": "${manifest_digest}"}
 EOF
-run_resolver config-metadata-absent \
+expect_failure_reason config-metadata-absent missing-metadata-config-digest \
+  run_resolver config-metadata-absent \
   "$fixture_root/config-metadata-absent.json" \
-  "$fixture_root/valid.iid" "$config_a" >/dev/null
+  "$fixture_root/valid.iid" "$manifest_digest"
+
+cat > "$fixture_root/top-level-only.json" <<EOF
+{
+  "containerimage.digest": "${manifest_digest}",
+  "containerimage.config.digest": "${config_a}"
+}
+EOF
+run_resolver top-level-only \
+  "$fixture_root/top-level-only.json" "$fixture_root/config.iid" "$config_a" >/dev/null
 
 cat > "$fixture_root/all-config-sources.json" <<EOF
 {
@@ -67,9 +108,19 @@ cat > "$fixture_root/all-config-sources.json" <<EOF
 }
 EOF
 run_resolver all-config-sources \
-  "$fixture_root/all-config-sources.json" "$fixture_root/valid.iid" "$config_a" >/dev/null
+  "$fixture_root/all-config-sources.json" "$fixture_root/config.iid" "$manifest_digest" >/dev/null
 
-expect_failure iid-daemon-mismatch run_resolver iid-daemon-mismatch \
+printf '{\r\n  "containerimage.digest": "%s",\r\n  "containerimage.config.digest": null,\r\n  "containerimage.descriptor": {"annotations": {"config.digest": "%s"}},\r\n  "note": "\347\211\247\345\240\264"\r\n}\r\n' \
+  "$manifest_digest" "$config_a" > "$fixture_root/controlled-crlf-utf8.json"
+run_resolver controlled-crlf-utf8 \
+  "$fixture_root/controlled-crlf-utf8.json" \
+  "$fixture_root/valid.iid" "$config_a" >/dev/null
+
+expect_failure_reason iid-manifest-mismatch iid-manifest-digest-mismatch \
+  run_resolver iid-manifest-mismatch \
+  "$fixture_root/null-top-level.json" "$fixture_root/config.iid" "$config_a"
+expect_failure_reason metadata-daemon-mismatch daemon-image-id-unrecognized \
+  run_resolver metadata-daemon-mismatch \
   "$fixture_root/null-top-level.json" "$fixture_root/valid.iid" "$config_b"
 expect_failure missing-iid run_resolver missing-iid \
   "$fixture_root/null-top-level.json" "$fixture_root/missing.iid" "$config_a"
@@ -88,8 +139,9 @@ cat > "$fixture_root/top-level-mismatch.json" <<EOF
   "containerimage.config.digest": "${config_b}"
 }
 EOF
-expect_failure top-level-mismatch run_resolver top-level-mismatch \
-  "$fixture_root/top-level-mismatch.json" "$fixture_root/valid.iid" "$config_a"
+expect_failure_reason top-level-iid-mismatch metadata-iid-config-digest-mismatch \
+  run_resolver top-level-iid-mismatch \
+  "$fixture_root/top-level-mismatch.json" "$fixture_root/config.iid" "$config_b"
 
 cat > "$fixture_root/descriptor-mismatch.json" <<EOF
 {
@@ -100,8 +152,22 @@ cat > "$fixture_root/descriptor-mismatch.json" <<EOF
   }
 }
 EOF
-expect_failure descriptor-mismatch run_resolver descriptor-mismatch \
+expect_failure_reason descriptor-mismatch daemon-image-id-unrecognized \
+  run_resolver descriptor-mismatch \
   "$fixture_root/descriptor-mismatch.json" "$fixture_root/valid.iid" "$config_a"
+
+cat > "$fixture_root/config-conflict.json" <<EOF
+{
+  "containerimage.digest": "${manifest_digest}",
+  "containerimage.config.digest": "${config_a}",
+  "containerimage.descriptor": {
+    "annotations": {"config.digest": "${config_b}"}
+  }
+}
+EOF
+expect_failure_reason config-conflict metadata-config-digest-conflict \
+  run_resolver config-conflict \
+  "$fixture_root/config-conflict.json" "$fixture_root/config.iid" "$config_a"
 
 cat > "$fixture_root/missing-manifest.json" <<EOF
 {"containerimage.config.digest": null}
@@ -137,4 +203,4 @@ printf '{not-json}\n' > "$fixture_root/invalid.json"
 expect_failure invalid-json run_resolver invalid-json \
   "$fixture_root/invalid.json" "$fixture_root/valid.iid" "$config_a"
 
-printf 'ECR_SYNC_DAPPER_IMAGE_IDENTITY_FIXTURES_OK positive=3 negative=12\n'
+printf 'ECR_SYNC_DAPPER_IMAGE_IDENTITY_FIXTURES_OK positive=4 negative=17\n'

@@ -40,7 +40,8 @@ the test suite never waits on production delays.
 
 - Build and runtime images use the digest-pinned Ubuntu 26.04 base. The build
   uses Go 1.26.6, Docker CLI 29.7.2, and the checksum-patched Buildx 0.36.1
-  source.
+  source. Its identity resolver uses `jq` `1.8.1-4ubuntu2`, installed from the
+  same dated Ubuntu snapshot and verified against the direct package lock.
 - The host Buildx client is `v0.36.1`, installed by
   `docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c`
   (`v4.2.0`). Dapper builders use BuildKit `v0.32.2` from
@@ -55,11 +56,22 @@ the test suite never waits on production delays.
   `1d8dde89b8aba914e05e45366770736fea1fd690`. It writes only below an empty,
   canonical, caller-owned run root and never installs into a system directory
   or global Docker CLI plugin directory.
-- Every Dapper export records its manifest digest separately. Its Buildx IID
-  must be a valid configuration JSON digest and must equal the loaded Docker
-  daemon image ID. Any non-null config digest emitted in Buildx metadata must
-  also match; missing, malformed, or conflicting required identity evidence
-  fails closed.
+- Every Dapper export records its manifest digest separately. The Buildx IID
+  must equal the top-level configuration digest when that metadata field is
+  present; otherwise it must equal the manifest digest selected by Buildx's
+  fallback rule. At least one metadata configuration source is required, and
+  all present sources must agree. The loaded Docker daemon image ID must equal either that
+  configuration digest or the exported manifest digest; the observed engine
+  mode is recorded. Missing, malformed, or conflicting identity evidence fails
+  closed.
+- Runtime images are built by an exact run-owned `docker-container` builder
+  using the locked BuildKit image. The reproducible exporter writes a new
+  Docker archive without daemon unpack/load options, verifies the archive hash,
+  then calls `docker image load` explicitly. The loaded image must pass the same
+  Buildx IID-mode, metadata, daemon configuration-ID, label, and non-root-user
+  checks. Failure cleanup is
+  restricted to the exact run-owned archive, builder, container, state volume,
+  and identity-bound image; broad builder or image pruning is forbidden.
 - The build does not download the historical Dapper binary or use its retired
   upstream build image.
 - The Windows variant uses the Microsoft Nano Server LTSC 2022 base, runs as

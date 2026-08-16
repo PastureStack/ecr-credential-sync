@@ -9,27 +9,88 @@ SUFFIX=""
 SCRIPTPATH="$(cd "$(dirname "$0")"; pwd -P)"
 [ "${ARCH}" != "amd64" ] && SUFFIX="_${ARCH}"
 
-cd $(dirname $0)/../package
-PACKAGE_DIR=$(pwd -P)
-
+repo_root=$(cd "${SCRIPTPATH}/.."; pwd -P)
 TAG=${TAG:-${VERSION}${SUFFIX}}
 REPO=${REPO:-ghcr.io/${IMAGE_NAMESPACE:-pasturestack}}
-REVISION=$(git -C .. rev-parse HEAD)
-SOURCE_DATE_EPOCH=$(git -C .. show -s --format=%ct HEAD)
+REVISION=$(git -C "$repo_root" rev-parse HEAD)
+SOURCE_DATE_EPOCH=$(git -C "$repo_root" show -s --format=%ct HEAD)
+IMAGE=${REPO}/ecr-credential-sync:${TAG}
+runtime_result="${repo_root}/dist/runtime-image-build.json"
+images_output="${repo_root}/dist/images"
+runtime_image_owned=0
+runtime_result_created=0
+images_output_created=0
+runtime_owned_image_id=
+staging_owned=0
 export SOURCE_DATE_EPOCH
 
+cd "${repo_root}/package"
+PACKAGE_DIR=$(pwd -P)
+
 cleanup() {
-  rm -f \
-    "${PACKAGE_DIR}/ecr-credential-sync" \
-    "${PACKAGE_DIR}/LICENSE" \
-    "${PACKAGE_DIR}/SECURITY.md" \
-    "${PACKAGE_DIR}/ORIGIN.md" \
-    "${PACKAGE_DIR}/COMPATIBILITY.md" \
-    "${PACKAGE_DIR}/THIRD_PARTY_NOTICES.md" \
-    "${PACKAGE_DIR}/ubuntu-apt.lock"
-  rm -rf "${PACKAGE_DIR}/licenses"
+  local status=$?
+  local cleanup_failed=0
+  local current_image_id remove_exit
+  trap - EXIT
+  set +e
+
+  if [ "$status" -ne 0 ] && [ "$runtime_image_owned" -eq 1 ]; then
+    current_image_id=$(docker image inspect --format '{{.Id}}' "$IMAGE" 2>/dev/null)
+    if [ "$?" -ne 0 ] || [ "$current_image_id" != "$runtime_owned_image_id" ]; then
+      printf 'ECR_SYNC_RUNTIME_PACKAGE_CLEANUP_REFUSED image=%s expected=%s actual=%s\n' \
+        "$IMAGE" "$runtime_owned_image_id" "${current_image_id:-unavailable}" >&2
+      cleanup_failed=1
+    else
+      docker image rm "$IMAGE"
+      remove_exit=$?
+      printf 'ECR_SYNC_RUNTIME_PACKAGE_IMAGE_REMOVE_NATIVE_EXIT=%s image=%s\n' \
+        "$remove_exit" "$IMAGE" >&2
+      [ "$remove_exit" -eq 0 ] || cleanup_failed=1
+    fi
+  fi
+  if [ "$status" -ne 0 ] && [ "$runtime_result_created" -eq 1 ]; then
+    rm -f -- "$runtime_result" || cleanup_failed=1
+  fi
+  if [ "$status" -ne 0 ] && [ "$images_output_created" -eq 1 ]; then
+    rm -f -- "$images_output" || cleanup_failed=1
+  fi
+  if [ "$staging_owned" -eq 1 ]; then
+    rm -f \
+      "${PACKAGE_DIR}/ecr-credential-sync" \
+      "${PACKAGE_DIR}/LICENSE" \
+      "${PACKAGE_DIR}/SECURITY.md" \
+      "${PACKAGE_DIR}/ORIGIN.md" \
+      "${PACKAGE_DIR}/COMPATIBILITY.md" \
+      "${PACKAGE_DIR}/THIRD_PARTY_NOTICES.md" \
+      "${PACKAGE_DIR}/ubuntu-apt.lock" || cleanup_failed=1
+    rm -rf -- "${PACKAGE_DIR}/licenses" || cleanup_failed=1
+  fi
+
+  if [ "$status" -eq 0 ] && [ "$cleanup_failed" -ne 0 ]; then
+    status=1
+  fi
+  exit "$status"
 }
 trap cleanup EXIT
+
+for staged_path in \
+    ecr-credential-sync LICENSE SECURITY.md ORIGIN.md COMPATIBILITY.md \
+    THIRD_PARTY_NOTICES.md ubuntu-apt.lock licenses; do
+  [ ! -e "${PACKAGE_DIR}/${staged_path}" ] && [ ! -L "${PACKAGE_DIR}/${staged_path}" ] || {
+    printf 'package staging path already exists: %s\n' "${PACKAGE_DIR}/${staged_path}" >&2
+    exit 1
+  }
+done
+mkdir -p "${repo_root}/dist"
+[ ! -e "$runtime_result" ] && [ ! -L "$runtime_result" ] || {
+  printf 'runtime result already exists: %s\n' "$runtime_result" >&2
+  exit 1
+}
+[ ! -e "$images_output" ] && [ ! -L "$images_output" ] || {
+  printf 'image list already exists: %s\n' "$images_output" >&2
+  exit 1
+}
+staging_owned=1
 
 cp ../bin/ecr-credential-sync .
 cp \
@@ -62,25 +123,26 @@ bash "${SCRIPTPATH}/normalize-runtime-context-mtimes" \
   "${PACKAGE_DIR}" \
   "${SOURCE_DATE_EPOCH}"
 
-IMAGE=${REPO}/ecr-credential-sync:${TAG}
-docker buildx build \
-  --output "type=docker,name=${IMAGE},rewrite-timestamp=true,compatibility-version=20" \
-  --pull \
-  --network "${DOCKER_BUILD_NETWORK:-host}" \
-  --provenance=false \
-  --sbom=false \
-  --build-arg UBUNTU_APT_SNAPSHOT="${UBUNTU_APT_SNAPSHOT:-20260808T000000Z}" \
-  --build-arg SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH}" \
-  --build-arg VERSION="${TAG}" \
-  --build-arg REVISION="${REVISION}" \
-  --tag "${IMAGE}" \
-  .
-test "$(docker image inspect "$IMAGE" --format '{{index .Config.Labels "org.opencontainers.image.version"}}')" = "$TAG"
-test "$(docker image inspect "$IMAGE" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')" = "$REVISION"
-test "$(docker image inspect "$IMAGE" --format '{{.Config.User}}')" = 10001:10001
-mkdir -p ../dist
-echo "${IMAGE}" > ../dist/images
-echo "Built ${IMAGE}"
+bash "${SCRIPTPATH}/build-runtime-image" build \
+  "$IMAGE" \
+  "$PACKAGE_DIR" \
+  "${PACKAGE_DIR}/Dockerfile" \
+  "$SOURCE_DATE_EPOCH" \
+  "${UBUNTU_APT_SNAPSHOT:-20260808T000000Z}" \
+  "$TAG" \
+  "$REVISION" \
+  "${DOCKER_BUILD_NETWORK:-host}" \
+  "$runtime_result"
+runtime_result_created=1
+runtime_image_owned=1
+runtime_owned_image_id=$(jq -er '.imageId' "$runtime_result")
+[[ "$runtime_owned_image_id" =~ ^sha256:[0-9a-f]{64}$ ]]
+(
+  set -o noclobber
+  printf '%s\n' "$IMAGE" >"$images_output"
+)
+images_output_created=1
+printf 'Built %s\n' "$IMAGE"
 
 package() {
   local os arch suffix tag repo env image_name binary_name
@@ -126,3 +188,5 @@ if [ -n "${CROSS:-}" ]; then
         done
     done
 fi
+
+runtime_image_owned=0
