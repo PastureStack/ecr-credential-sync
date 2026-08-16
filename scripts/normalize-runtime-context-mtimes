@@ -1,0 +1,83 @@
+#!/bin/bash
+set -euo pipefail
+
+if [ "$#" -ne 3 ]; then
+  printf 'usage: %s DOCKERFILE CONTEXT_DIR SOURCE_DATE_EPOCH\n' "$0" >&2
+  exit 64
+fi
+
+dockerfile=$1
+context_dir=$2
+source_date_epoch=$3
+
+case "$source_date_epoch" in
+  ''|*[!0-9]*)
+    printf 'SOURCE_DATE_EPOCH must be an unsigned integer\n' >&2
+    exit 64
+    ;;
+esac
+
+if [ ! -f "$dockerfile" ]; then
+  printf 'Dockerfile does not exist: %s\n' "$dockerfile" >&2
+  exit 66
+fi
+if [ ! -d "$context_dir" ]; then
+  printf 'build context does not exist: %s\n' "$context_dir" >&2
+  exit 66
+fi
+context_dir=$(cd "$context_dir" && pwd -P)
+
+mapfile -t copy_sources < <(
+  awk '
+    toupper($1) != "COPY" { next }
+    {
+      from_stage = 0
+      for (field = 2; field <= NF; field++) {
+        if ($field == "--from" || $field ~ /^--from=/) {
+          from_stage = 1
+        }
+      }
+      if (from_stage) {
+        next
+      }
+      for (field = 2; field < NF; field++) {
+        if ($field !~ /^--/) {
+          print $field
+        }
+      }
+    }
+  ' "$dockerfile" | LC_ALL=C sort -u
+)
+
+if [ "${#copy_sources[@]}" -eq 0 ]; then
+  printf 'Dockerfile has no local COPY sources: %s\n' "$dockerfile" >&2
+  exit 65
+fi
+
+runtime_inputs=()
+for source in "${copy_sources[@]}"; do
+  source=${source%/}
+  case "/${source}/" in
+    *'/../'*|*'/./../'*|//* )
+      printf 'unsafe local COPY source: %s\n' "$source" >&2
+      exit 65
+      ;;
+  esac
+  if [ -z "$source" ] || [ "${source#/}" != "$source" ]; then
+    printf 'invalid local COPY source: %s\n' "$source" >&2
+    exit 65
+  fi
+  input_path="${context_dir}/${source}"
+  if [ ! -e "$input_path" ] && [ ! -L "$input_path" ]; then
+    printf 'local COPY source does not exist: %s\n' "$source" >&2
+    exit 66
+  fi
+  runtime_inputs+=("$input_path")
+done
+
+find "${runtime_inputs[@]}" -xdev -print0 |
+  LC_ALL=C sort -zu |
+  xargs -0 -r touch --no-dereference --date="@${source_date_epoch}" --
+
+printf 'RUNTIME_CONTEXT_MTIMES_NORMALIZED epoch=%s local_copy_sources=%s\n' \
+  "$source_date_epoch" "${#copy_sources[@]}"

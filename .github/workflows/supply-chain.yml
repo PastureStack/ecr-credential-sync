@@ -52,6 +52,7 @@ jobs:
             scripts/ci \
             scripts/entry \
             scripts/package \
+            scripts/normalize-runtime-context-mtimes \
             scripts/check-source-gates \
             scripts/generate-source-sbom.py \
             scripts/test \

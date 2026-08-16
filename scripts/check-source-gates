@@ -61,6 +61,11 @@ require_marker package/windows/amd64/Dockerfile 'mcr.microsoft.com/windows/nanos
 require_marker scripts/package 'test "$legal_count" -eq 10' ECR_SYNC_LEGAL_COUNT_GATE_MISSING
 require_marker scripts/package 'docker buildx build' ECR_SYNC_BUILDX_BUILD_MISSING
 require_marker scripts/package 'export SOURCE_DATE_EPOCH' ECR_SYNC_SOURCE_DATE_EPOCH_MISSING
+require_marker scripts/package 'normalize-runtime-context-mtimes' ECR_SYNC_RUNTIME_CONTEXT_MTIME_NORMALIZER_MISSING
+require_marker scripts/package '--output "type=docker,name=${IMAGE},rewrite-timestamp=true,compatibility-version=20"' ECR_SYNC_REPRODUCIBLE_IMAGE_EXPORT_MISSING
+require_marker scripts/normalize-runtime-context-mtimes 'toupper($1) != "COPY"' ECR_SYNC_RUNTIME_COPY_DISCOVERY_MISSING
+require_marker scripts/normalize-runtime-context-mtimes 'touch --no-dereference --date="@${source_date_epoch}"' ECR_SYNC_RUNTIME_CONTEXT_TOUCH_MISSING
+require_marker package/Dockerfile 'touch --no-dereference --date="@${SOURCE_DATE_EPOCH}" /snapshot-ca-certificates.crt' ECR_SYNC_CA_MTIME_NORMALIZATION_MISSING
 require_marker scripts/build '-trimpath' ECR_SYNC_GO_TRIMPATH_MISSING
 require_marker scripts/build '-buildvcs=false' ECR_SYNC_GO_VCS_METADATA_NOT_DISABLED
 require_marker scripts/build '-buildid=' ECR_SYNC_GO_BUILD_ID_NOT_NORMALIZED
@@ -72,8 +77,54 @@ require_marker internal/platformapi/client.go 'endpoint := service.client.baseUR
 require_marker README.md 'ghcr.io/pasturestack/ecr-credential-sync:v3.1.0' ECR_SYNC_README_VERSION_TAG_MISSING
 
 if ! bash -n scripts/build scripts/check-source-gates scripts/ci scripts/entry \
-  scripts/package scripts/release scripts/test scripts/validate scripts/version; then
+  scripts/normalize-runtime-context-mtimes scripts/package scripts/release \
+  scripts/test scripts/validate scripts/version; then
   printf 'ECR_SYNC_SHELL_SYNTAX_INVALID\n' >&2
+  failure_count=$((failure_count + 1))
+fi
+
+if ! (
+  set -euo pipefail
+  normalization_root=$(mktemp -d)
+  case "$normalization_root" in
+    /tmp/*|/var/tmp/*) ;;
+    *) exit 1 ;;
+  esac
+  trap 'rm -rf -- "$normalization_root"' EXIT
+  mkdir -p "$normalization_root/context/local-dir"
+  printf 'payload\n' > "$normalization_root/context/local-file"
+  printf 'nested\n' > "$normalization_root/context/local-dir/nested"
+  printf 'control\n' > "$normalization_root/context/not-copied"
+  cat > "$normalization_root/Dockerfile" <<'EOF'
+FROM scratch AS source
+COPY --from=source /ignored /ignored
+FROM scratch
+COPY --chown=10001:10001 local-file /local-file
+COPY local-dir/ /local-dir/
+EOF
+  test_epoch=946684800
+  newer_epoch=$((test_epoch + 600))
+  touch --date="@${newer_epoch}" \
+    "$normalization_root/context/local-file" \
+    "$normalization_root/context/local-dir" \
+    "$normalization_root/context/local-dir/nested" \
+    "$normalization_root/context/not-copied"
+  bash scripts/normalize-runtime-context-mtimes \
+    "$normalization_root/Dockerfile" \
+    "$normalization_root/context" \
+    "$test_epoch" >/dev/null
+  test "$(stat -c '%Y' "$normalization_root/context/local-file")" = "$test_epoch"
+  test "$(stat -c '%Y' "$normalization_root/context/local-dir")" = "$test_epoch"
+  test "$(stat -c '%Y' "$normalization_root/context/local-dir/nested")" = "$test_epoch"
+  test "$(stat -c '%Y' "$normalization_root/context/not-copied")" = "$newer_epoch"
+  if bash scripts/normalize-runtime-context-mtimes \
+      "$normalization_root/Dockerfile" \
+      "$normalization_root/context" \
+      invalid >/dev/null 2>&1; then
+    exit 1
+  fi
+); then
+  printf 'ECR_SYNC_RUNTIME_MTIME_NORMALIZATION_CONTRACT_INVALID\n' >&2
   failure_count=$((failure_count + 1))
 fi
 
@@ -215,5 +266,5 @@ if [ "$failure_count" -ne 0 ]; then
   exit 1
 fi
 
-printf 'ECR_SYNC_SOURCE_GATES_OK go=1.26.6 docker=29.7.2 buildx=0.36.1 ubuntu=26.04 snapshot=20260808T000000Z non_root=1 legal_files=%s endpoint_override=bounded buildx_legacy_module_removed=1 sbom_trivy_gate=1\n' \
+printf 'ECR_SYNC_SOURCE_GATES_OK go=1.26.6 docker=29.7.2 buildx=0.36.1 ubuntu=26.04 snapshot=20260808T000000Z non_root=1 legal_files=%s endpoint_override=bounded buildx_legacy_module_removed=1 runtime_mtime_normalization=all_local_copy_inputs sbom_trivy_gate=1\n' \
   "$legal_count"

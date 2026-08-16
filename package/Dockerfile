@@ -2,11 +2,15 @@ ARG UBUNTU_IMAGE=ubuntu:26.04@sha256:678c6550cc43645e08669028bc177f50be4e7c5b8cc
 
 FROM ${UBUNTU_IMAGE} AS snapshot-ca-bootstrap
 
+ARG SOURCE_DATE_EPOCH
+
 ADD --checksum=sha256:6077d27c6b6f8b23590cb01ff877ed8c804a67a5442cc32b5a33da10d2bd0e90 \
     https://snapshot.ubuntu.com/ubuntu/20260808T000000Z/pool/main/c/ca-certificates/ca-certificates_20260601~26.04.1_all.deb \
     /tmp/ca-certificates.deb
 
 RUN set -eux; \
+    case "${SOURCE_DATE_EPOCH}" in ''|*[!0-9]*) exit 64 ;; esac; \
+    test "${SOURCE_DATE_EPOCH}" -le "$(date -u +%s)"; \
     rm -rf /tmp/ca-bootstrap; \
     mkdir -p /tmp/ca-bootstrap; \
     dpkg-deb --extract /tmp/ca-certificates.deb /tmp/ca-bootstrap; \
@@ -14,7 +18,9 @@ RUN set -eux; \
         | LC_ALL=C sort \
         | while IFS= read -r certificate; do sed -e '$a\' "${certificate}"; done \
         > /snapshot-ca-certificates.crt; \
-    test -s /snapshot-ca-certificates.crt
+    test -s /snapshot-ca-certificates.crt; \
+    touch --no-dereference --date="@${SOURCE_DATE_EPOCH}" /snapshot-ca-certificates.crt; \
+    test "$(stat -c '%Y' /snapshot-ca-certificates.crt)" = "${SOURCE_DATE_EPOCH}"
 
 FROM ${UBUNTU_IMAGE}
 
@@ -32,6 +38,8 @@ COPY --from=snapshot-ca-bootstrap /snapshot-ca-certificates.crt /etc/ssl/certs/c
 COPY ubuntu-apt.lock /usr/share/pasturestack/manifests/ubuntu-apt.lock
 
 RUN set -eux; \
+    case "${SOURCE_DATE_EPOCH}" in ''|*[!0-9]*) exit 64 ;; esac; \
+    test "${SOURCE_DATE_EPOCH}" -le "$(date -u +%s)"; \
     . /usr/share/pasturestack/manifests/ubuntu-apt.lock; \
     test "${UBUNTU_APT_SNAPSHOT}" = "${UBUNTU_APT_LOCKED_SNAPSHOT}"; \
     rm -f /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; \

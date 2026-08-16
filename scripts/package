@@ -53,9 +53,18 @@ done < <(
 )
 test "$legal_count" -eq 10
 
+if [ "$SOURCE_DATE_EPOCH" -gt "$(date -u +%s)" ]; then
+  printf 'SOURCE_DATE_EPOCH is in the future: %s\n' "$SOURCE_DATE_EPOCH" >&2
+  exit 1
+fi
+bash "${SCRIPTPATH}/normalize-runtime-context-mtimes" \
+  "${PACKAGE_DIR}/Dockerfile" \
+  "${PACKAGE_DIR}" \
+  "${SOURCE_DATE_EPOCH}"
+
 IMAGE=${REPO}/ecr-credential-sync:${TAG}
 docker buildx build \
-  --load \
+  --output "type=docker,name=${IMAGE},rewrite-timestamp=true,compatibility-version=20" \
   --pull \
   --network "${DOCKER_BUILD_NETWORK:-host}" \
   --provenance=false \
@@ -94,6 +103,10 @@ package() {
       return
   fi
   cp bin/$os/$arch/$binary_name package/$os/$arch
+  bash "$SCRIPTPATH/normalize-runtime-context-mtimes" \
+    "package/$os/$arch/Dockerfile" \
+    "package/$os/$arch" \
+    "$SOURCE_DATE_EPOCH"
 
   # because if building windows image, need to connect to docker on windows. set DOCKER_HOST for docker build context
   [ "$os" == "windows" ] && dhost="tcp://$WINDOWS_DOCKER_HOST:2375" || dhost="${DOCKER_HOST:-}"
