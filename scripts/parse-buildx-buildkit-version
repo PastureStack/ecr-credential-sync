@@ -1,0 +1,39 @@
+#!/bin/bash
+set -euo pipefail
+
+if [ "$#" -ne 1 ]; then
+  printf 'usage: %s BUILDX_INSPECT_FILE\n' "${0##*/}" >&2
+  exit 64
+fi
+
+inspect_file=$1
+if [ ! -f "$inspect_file" ]; then
+  printf 'ECR_SYNC_BUILDKIT_VERSION_READBACK_INVALID reason=input-not-regular-file\n' >&2
+  exit 1
+fi
+
+awk '
+  $1 == "BuildKit:" {
+    malformed = 1
+    next
+  }
+
+  $1 == "BuildKit" && $2 ~ /^version/ {
+    candidate_count++
+    if ($2 != "version:" || NF != 3 || $3 == "") {
+      malformed = 1
+      next
+    }
+    valid_count++
+    version = $3
+  }
+
+  END {
+    if (malformed || candidate_count != 1 || valid_count != 1) {
+      printf "ECR_SYNC_BUILDKIT_VERSION_READBACK_INVALID candidates=%d valid=%d malformed=%d\n", \
+        candidate_count, valid_count, malformed > "/dev/stderr"
+      exit 1
+    }
+    print version
+  }
+' "$inspect_file"

@@ -1,0 +1,64 @@
+#!/bin/bash
+set -euo pipefail
+
+repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+parser="$repo_root/scripts/parse-buildx-buildkit-version"
+fixture_root=$(mktemp -d)
+case "$fixture_root" in
+  /tmp/*|/var/tmp/*) ;;
+  *) exit 1 ;;
+esac
+trap 'rm -rf -- "$fixture_root"' EXIT
+
+expect_failure() {
+  local name=$1
+  local fixture="${fixture_root}/${name}.txt"
+  local stdout="${fixture_root}/${name}.stdout"
+  local stderr="${fixture_root}/${name}.stderr"
+
+  if bash "$parser" "$fixture" >"$stdout" 2>"$stderr"; then
+    printf 'expected BuildKit version parser fixture to fail: %s\n' "$name" >&2
+    exit 1
+  fi
+  test ! -s "$stdout"
+  grep -F 'ECR_SYNC_BUILDKIT_VERSION_READBACK_INVALID' "$stderr" >/dev/null
+}
+
+cat >"$fixture_root/valid.txt" <<'EOF'
+Name:          fixture-builder
+Driver:        docker-container
+Status:        running
+BuildKit daemon flags: --allow-insecure-entitlement=network.host
+BuildKit version:      v0.32.2
+Platforms:             linux/amd64, linux/386
+EOF
+test "$(bash "$parser" "$fixture_root/valid.txt")" = v0.32.2
+
+cat >"$fixture_root/missing.txt" <<'EOF'
+Name:          fixture-builder
+Status:        running
+EOF
+expect_failure missing
+
+cat >"$fixture_root/duplicate.txt" <<'EOF'
+BuildKit version:      v0.32.2
+BuildKit version:      v0.32.2
+EOF
+expect_failure duplicate
+
+cat >"$fixture_root/extra-field.txt" <<'EOF'
+BuildKit version:      v0.32.2 unexpected
+EOF
+expect_failure extra-field
+
+cat >"$fixture_root/old-error-format.txt" <<'EOF'
+BuildKit:              v0.32.2
+EOF
+expect_failure old-error-format
+
+cat >"$fixture_root/empty-value.txt" <<'EOF'
+BuildKit version:
+EOF
+expect_failure empty-value
+
+printf 'ECR_SYNC_BUILDKIT_VERSION_FIXTURES_OK positive=1 negative=5\n'

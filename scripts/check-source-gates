@@ -154,6 +154,11 @@ require_marker scripts/test-install-locked-host-buildx 'writable-parent' ECR_SYN
 require_marker scripts/test-install-locked-host-buildx 'group-writable-parent' ECR_SYNC_LOCKED_BUILDX_GROUP_WRITABLE_PARENT_REGRESSION_MISSING
 require_marker scripts/test-install-locked-host-buildx 'global-plugin-destination' ECR_SYNC_LOCKED_BUILDX_GLOBAL_PLUGIN_REGRESSION_MISSING
 require_marker scripts/test-install-locked-host-buildx 'download-failure' ECR_SYNC_LOCKED_BUILDX_DOWNLOAD_REGRESSION_MISSING
+require_marker scripts/test-buildx-buildkit-version 'missing.txt' ECR_SYNC_BUILDKIT_VERSION_MISSING_REGRESSION_MISSING
+require_marker scripts/test-buildx-buildkit-version 'duplicate.txt' ECR_SYNC_BUILDKIT_VERSION_DUPLICATE_REGRESSION_MISSING
+require_marker scripts/test-buildx-buildkit-version 'extra-field.txt' ECR_SYNC_BUILDKIT_VERSION_EXTRA_FIELD_REGRESSION_MISSING
+require_marker scripts/test-buildx-buildkit-version 'old-error-format.txt' ECR_SYNC_BUILDKIT_VERSION_OLD_FORMAT_REGRESSION_MISSING
+require_marker scripts/test-buildx-buildkit-version 'empty-value.txt' ECR_SYNC_BUILDKIT_VERSION_EMPTY_REGRESSION_MISSING
 require_marker package/Dockerfile 'USER 10001:10001' ECR_SYNC_RUNTIME_NOT_NON_ROOT
 require_marker package/Dockerfile 'COPY --chown=0:0 --chmod=0444 ubuntu-apt.lock /usr/share/pasturestack/manifests/ubuntu-apt.lock' ECR_SYNC_RUNTIME_LOCK_MODE_NOT_EXPLICIT
 require_marker package/Dockerfile 'chmod 0755 /usr/share/pasturestack /usr/share/pasturestack/manifests' ECR_SYNC_RUNTIME_MANIFEST_DIRECTORY_MODE_MISSING
@@ -221,12 +226,18 @@ require_marker README.md 'ghcr.io/pasturestack/ecr-credential-sync:v3.1.0' ECR_S
 
 if ! bash -n scripts/build scripts/build-runtime-image scripts/check-source-gates scripts/ci scripts/entry \
   scripts/install-locked-host-buildx scripts/normalize-runtime-context-mtimes \
-  scripts/package scripts/release \
+  scripts/package scripts/parse-buildx-buildkit-version scripts/release \
   scripts/resolve-dapper-image-identity scripts/test \
+  scripts/test-buildx-buildkit-version \
   scripts/test-dapper-image-identity scripts/test-install-locked-host-buildx \
   scripts/test-runtime-image-export-load \
   scripts/validate scripts/version; then
   printf 'ECR_SYNC_SHELL_SYNTAX_INVALID\n' >&2
+  failure_count=$((failure_count + 1))
+fi
+
+if ! bash scripts/test-buildx-buildkit-version; then
+  printf 'ECR_SYNC_BUILDKIT_VERSION_FIXTURES_INVALID\n' >&2
   failure_count=$((failure_count + 1))
 fi
 
@@ -401,11 +412,14 @@ require_marker .github/workflows/supply-chain.yml \
   'moby/buildkit:v0.32.2@sha256:28a898719c18a33f4e8000685287fa36fd0dd9560c6440227d3a732d79bb41d8' \
   ECR_SYNC_HOST_BUILDKIT_IMAGE_NOT_PINNED
 require_marker .github/workflows/supply-chain.yml '--driver-opt "image=$DAPPER_BUILDKIT_IMAGE"' ECR_SYNC_DAPPER_BUILDKIT_IMAGE_ARGUMENT_MISSING
-require_marker .github/workflows/supply-chain.yml 'test "$(cat "evidence/${prefix}-buildkit-version.txt")" = v0.32.2' ECR_SYNC_DAPPER_BUILDKIT_VERSION_GATE_MISSING
+require_marker .github/workflows/supply-chain.yml 'bash scripts/parse-buildx-buildkit-version' ECR_SYNC_DAPPER_BUILDKIT_VERSION_PARSER_MISSING
+require_marker .github/workflows/supply-chain.yml 'test "$(cat "evidence/${prefix}-buildkit-version.txt")" = "$HOST_BUILDKIT_VERSION"' ECR_SYNC_DAPPER_BUILDKIT_VERSION_GATE_MISSING
+reject_marker .github/workflows/supply-chain.yml '$1 == "BuildKit:"' ECR_SYNC_FRAGILE_BUILDKIT_VERSION_PARSER_PRESENT
 require_marker .github/workflows/supply-chain.yml 'test "$(cat "evidence/${prefix}-buildkit-image.txt")" = "$DAPPER_BUILDKIT_IMAGE"' ECR_SYNC_DAPPER_BUILDKIT_IMAGE_GATE_MISSING
 require_marker .github/workflows/supply-chain.yml 'test "$buildx_commit" = 1d8dde89b8aba914e05e45366770736fea1fd690' ECR_SYNC_HOST_BUILDX_COMMIT_GATE_MISSING
 require_marker .github/workflows/supply-chain.yml 'scripts/install-locked-host-buildx' ECR_SYNC_LOCKED_BUILDX_SOURCE_EVIDENCE_MISSING
 require_marker .github/workflows/supply-chain.yml 'scripts/test-install-locked-host-buildx' ECR_SYNC_LOCKED_BUILDX_TEST_EVIDENCE_MISSING
+require_marker .github/workflows/supply-chain.yml 'scripts/test-buildx-buildkit-version' ECR_SYNC_BUILDKIT_VERSION_TEST_EVIDENCE_MISSING
 reject_marker .github/workflows/supply-chain.yml 'moby/buildkit:buildx-stable-1' ECR_SYNC_MUTABLE_BUILDKIT_STABLE_FALLBACK_PRESENT
 reject_marker .github/workflows/supply-chain.yml 'moby/buildkit:latest' ECR_SYNC_MUTABLE_BUILDKIT_LATEST_PRESENT
 reject_marker .github/workflows/supply-chain.yml 'docker/setup-buildx-action@' ECR_SYNC_EXTERNAL_BUILDX_ACTION_PRESENT
@@ -595,5 +609,5 @@ if [ "$failure_count" -ne 0 ]; then
   exit 1
 fi
 
-printf 'ECR_SYNC_SOURCE_GATES_OK go=1.26.6 docker=29.7.2 docker_cli_source_built=go1.26.6 buildx=0.36.1 jq=1.8.1 jq_package=1.8.1-4ubuntu2 host_buildx=0.36.1 host_buildx_binary=sha256:48af8a397ebd60178778bf63611dbcebe5f5e7a9be90eb9147b24b9587455778 host_buildkit=0.32.2 dapper_identity=buildx-iid+metadata-config+daemon-config-or-manifest ubuntu=26.04 snapshot=20260808T000000Z non_root=1 legal_files=%s endpoint_override=bounded brand_gate=tracked_source_only runtime_manifest_access=default-user-read-only buildx_legacy_module_removed=1 runtime_mtime_normalization=all_local_copy_inputs dapper_reproducibility=buildkit-rewrite-timestamp runtime_export=docker-archive-explicit-load runtime_builder=exact-run-owned-pinned sbom_trivy_gate=1\n' \
+printf 'ECR_SYNC_SOURCE_GATES_OK go=1.26.6 docker=29.7.2 docker_cli_source_built=go1.26.6 buildx=0.36.1 jq=1.8.1 jq_package=1.8.1-4ubuntu2 host_buildx=0.36.1 host_buildx_binary=sha256:48af8a397ebd60178778bf63611dbcebe5f5e7a9be90eb9147b24b9587455778 host_buildkit=0.32.2 buildkit_version_readback=exact-single-record dapper_identity=buildx-iid+metadata-config+daemon-config-or-manifest ubuntu=26.04 snapshot=20260808T000000Z non_root=1 legal_files=%s endpoint_override=bounded brand_gate=tracked_source_only runtime_manifest_access=default-user-read-only buildx_legacy_module_removed=1 runtime_mtime_normalization=all_local_copy_inputs dapper_reproducibility=buildkit-rewrite-timestamp runtime_export=docker-archive-explicit-load runtime_builder=exact-run-owned-pinned sbom_trivy_gate=1\n' \
   "$legal_count"

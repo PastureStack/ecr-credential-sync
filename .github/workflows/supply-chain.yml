@@ -168,10 +168,12 @@ jobs:
             scripts/install-locked-host-buildx \
             scripts/package \
             scripts/normalize-runtime-context-mtimes \
+            scripts/parse-buildx-buildkit-version \
             scripts/resolve-dapper-image-identity \
             scripts/check-source-gates \
             scripts/generate-source-sbom.py \
             scripts/test \
+            scripts/test-buildx-buildkit-version \
             scripts/test-dapper-image-identity \
             scripts/test-install-locked-host-buildx \
             scripts/test-runtime-image-export-load \
@@ -211,6 +213,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          source toolchain/host-build-toolchain.lock
           source_date_epoch="$(git show -s --format=%ct HEAD)"
           expected_dapper_created="$(date -u --date="@${source_date_epoch}" +'%Y-%m-%dT%H:%M:%SZ')"
           first_dapper_builder="ecr-dapper-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-first"
@@ -238,10 +241,10 @@ jobs:
               --name "$builder" >/dev/null
             docker buildx inspect --bootstrap "$builder" \
               > "evidence/${prefix}-buildkit-builder.txt"
-            awk '$1 == "BuildKit:" { print $2 }' \
+            bash scripts/parse-buildx-buildkit-version \
               "evidence/${prefix}-buildkit-builder.txt" \
               > "evidence/${prefix}-buildkit-version.txt"
-            test "$(cat "evidence/${prefix}-buildkit-version.txt")" = v0.32.2
+            test "$(cat "evidence/${prefix}-buildkit-version.txt")" = "$HOST_BUILDKIT_VERSION"
             docker container inspect --format '{{.Config.Image}}' "$builder_container" \
               > "evidence/${prefix}-buildkit-image.txt"
             test "$(cat "evidence/${prefix}-buildkit-image.txt")" = "$DAPPER_BUILDKIT_IMAGE"
