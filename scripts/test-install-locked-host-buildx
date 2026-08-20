@@ -139,6 +139,20 @@ create_case writable-destination v0.36.1
 chmod 0770 "$fixture_destination"
 expect_failure writable-destination destination-root-group-or-world-writable run_installer
 
+create_case writable-parent v0.36.1
+chmod 0755 "$fixture_root"
+chmod 0777 "$case_root"
+expect_failure writable-parent destination-ancestor-writable-without-sticky-bit \
+  run_installer
+chmod 0700 "$fixture_root"
+
+create_case group-writable-parent v0.36.1
+chmod 0755 "$fixture_root"
+chmod 0770 "$case_root"
+expect_failure group-writable-parent destination-ancestor-writable-without-sticky-bit \
+  run_installer
+chmod 0700 "$fixture_root"
+
 create_case global-plugin-destination v0.36.1
 fixture_home="${case_root}/home"
 fixture_destination="${fixture_home}/.docker/cli-plugins"
@@ -150,4 +164,4 @@ create_case download-failure v0.36.1
 expect_failure download-failure checksums-download-failed \
   run_installer_download_failure
 
-printf 'ECR_SYNC_LOCKED_HOST_BUILDX_FIXTURES_OK positive=1 negative=7\n'
+printf 'ECR_SYNC_LOCKED_HOST_BUILDX_FIXTURES_OK positive=1 negative=9\n'

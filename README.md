@@ -131,9 +131,12 @@ export DAPPER_BUILDX_COMMAND="$(bash scripts/install-locked-host-buildx "$RUN_RO
 
 The helper verifies the official checksum file, binary hash, version, and
 commit before returning the executable path. It refuses existing, symlinked,
-non-canonical, system, and global Docker plugin destinations; it never writes
-to `/usr` or the user's Docker CLI plugin directory. GitHub Actions continues
-to use the commit-pinned setup action rather than this development fallback.
+non-canonical, system, and global Docker plugin destinations. Every path
+ancestor must be owned by root or the caller; group- or world-writable
+ancestors must use the sticky bit. The helper binds subsequent operations to
+the validated run-root identity and never writes to `/usr` or the user's Docker
+CLI plugin directory. GitHub Actions continues to use the commit-pinned setup
+action rather than this development fallback.
 The development packaging harness must use this exact command for builder
 create, inspect, and removal, and pass it to `make` with the pinned builder.
 

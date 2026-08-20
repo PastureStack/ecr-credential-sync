@@ -141,12 +141,17 @@ require_marker scripts/install-locked-host-buildx 'version-readback-commit-misma
 require_marker scripts/install-locked-host-buildx 'destination-root-is-global-docker-config' ECR_SYNC_LOCKED_BUILDX_GLOBAL_INSTALL_REJECTION_MISSING
 require_marker scripts/install-locked-host-buildx 'destination-root-not-empty' ECR_SYNC_LOCKED_BUILDX_OVERWRITE_REJECTION_MISSING
 require_marker scripts/install-locked-host-buildx 'destination-root-group-or-world-writable' ECR_SYNC_LOCKED_BUILDX_WRITABLE_ROOT_REJECTION_MISSING
+require_marker scripts/install-locked-host-buildx 'destination-ancestor-owner-untrusted' ECR_SYNC_LOCKED_BUILDX_ANCESTOR_OWNER_GATE_MISSING
+require_marker scripts/install-locked-host-buildx 'destination-ancestor-writable-without-sticky-bit' ECR_SYNC_LOCKED_BUILDX_ANCESTOR_MODE_GATE_MISSING
+require_marker scripts/install-locked-host-buildx 'destination-root-identity-changed' ECR_SYNC_LOCKED_BUILDX_ROOT_IDENTITY_GATE_MISSING
 require_marker scripts/install-locked-host-buildx 'chmod 0555 "$target"' ECR_SYNC_LOCKED_BUILDX_FINAL_MODE_MISSING
 require_marker scripts/test-install-locked-host-buildx 'hash-mismatch' ECR_SYNC_LOCKED_BUILDX_HASH_REGRESSION_MISSING
 require_marker scripts/test-install-locked-host-buildx 'version-mismatch' ECR_SYNC_LOCKED_BUILDX_VERSION_REGRESSION_MISSING
 require_marker scripts/test-install-locked-host-buildx 'existing-destination' ECR_SYNC_LOCKED_BUILDX_EXISTING_REGRESSION_MISSING
 require_marker scripts/test-install-locked-host-buildx 'symlink-destination' ECR_SYNC_LOCKED_BUILDX_SYMLINK_REGRESSION_MISSING
 require_marker scripts/test-install-locked-host-buildx 'writable-destination' ECR_SYNC_LOCKED_BUILDX_WRITABLE_ROOT_REGRESSION_MISSING
+require_marker scripts/test-install-locked-host-buildx 'writable-parent' ECR_SYNC_LOCKED_BUILDX_WRITABLE_PARENT_REGRESSION_MISSING
+require_marker scripts/test-install-locked-host-buildx 'group-writable-parent' ECR_SYNC_LOCKED_BUILDX_GROUP_WRITABLE_PARENT_REGRESSION_MISSING
 require_marker scripts/test-install-locked-host-buildx 'global-plugin-destination' ECR_SYNC_LOCKED_BUILDX_GLOBAL_PLUGIN_REGRESSION_MISSING
 require_marker scripts/test-install-locked-host-buildx 'download-failure' ECR_SYNC_LOCKED_BUILDX_DOWNLOAD_REGRESSION_MISSING
 require_marker package/Dockerfile 'USER 10001:10001' ECR_SYNC_RUNTIME_NOT_NON_ROOT
@@ -179,10 +184,12 @@ require_marker scripts/build-runtime-image '"$docker_path" buildx build' ECR_SYN
 require_marker scripts/build-runtime-image 'export_spec="type=docker,dest=${archive},name=${image},rewrite-timestamp=true,compatibility-version=20"' ECR_SYNC_REPRODUCIBLE_ARCHIVE_EXPORT_MISSING
 require_marker scripts/build-runtime-image '"$docker_path" image load --input "$archive"' ECR_SYNC_EXPLICIT_RUNTIME_IMAGE_LOAD_MISSING
 require_marker scripts/build-runtime-image 'export BUILDX_CONFIG="${run_root}/buildx-config"' ECR_SYNC_RUNTIME_BUILDX_CONFIG_NOT_RUN_OWNED
+require_marker scripts/build-runtime-image 'exact_builder_absent || fail builder-instance-already-exists' ECR_SYNC_RUNTIME_BUILDER_PREFLIGHT_MISSING
 require_marker scripts/build-runtime-image '--driver-opt "image=${HOST_BUILDKIT_IMAGE}"' ECR_SYNC_RUNTIME_BUILDKIT_IMAGE_NOT_PINNED
 require_marker scripts/build-runtime-image 'builder_container="buildx_buildkit_${builder}0"' ECR_SYNC_RUNTIME_BUILDER_CONTAINER_IDENTITY_MISSING
 require_marker scripts/build-runtime-image 'builder_volume="${builder_container}_state"' ECR_SYNC_RUNTIME_BUILDER_VOLUME_IDENTITY_MISSING
 require_marker scripts/build-runtime-image '"$docker_path" buildx rm --force "$builder"' ECR_SYNC_RUNTIME_EXACT_BUILDER_CLEANUP_MISSING
+require_marker scripts/test-runtime-image-export-load 'builder-create-failure' ECR_SYNC_RUNTIME_BUILDER_OWNERSHIP_REGRESSION_MISSING
 require_marker scripts/build-runtime-image 'archive-hash-readback-failed' ECR_SYNC_RUNTIME_ARCHIVE_HASH_READBACK_MISSING
 require_marker scripts/build-runtime-image 'bash "$resolver"' ECR_SYNC_RUNTIME_IMAGE_IDENTITY_GATE_MISSING
 require_marker scripts/build-runtime-image 'ECR_SYNC_RUNTIME_BUILDX_BUILD_NATIVE_EXIT=' ECR_SYNC_RUNTIME_BUILDX_NATIVE_EXIT_MISSING

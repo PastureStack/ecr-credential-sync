@@ -33,7 +33,13 @@ if [ "$1" = buildx ]; then
     version)
       printf 'github.com/docker/buildx v0.36.1 1d8dde89b8aba914e05e45366770736fea1fd690\n'
       ;;
+    ls)
+      if [ "$FIXTURE_CASE" = preexisting-builder ]; then
+        printf '%s *\n' "$RUNTIME_EXPECTED_BUILDER"
+      fi
+      ;;
     create)
+      [ "$FIXTURE_CASE" != builder-create-failure ] || exit 31
       touch "$FAKE_STATE_ROOT/builder"
       ;;
     inspect)
@@ -261,6 +267,7 @@ run_case() {
     FIXTURE_REVISION="$revision" \
     RUNTIME_EXPECTED_CONTAINER="$container" \
     RUNTIME_EXPECTED_VOLUME="$volume" \
+    RUNTIME_EXPECTED_BUILDER="$builder" \
     RUNTIME_IMAGE_TEMP_ROOT="$temp_root" \
     RUNTIME_IMAGE_BUILD_TOKEN="$token" \
     bash "$helper" build \
@@ -311,7 +318,15 @@ run_case() {
 
   [ ! -e "$state_root/builder" ]
   [ ! -e "${temp_root}/ecr-runtime-image-${token}" ]
-  grep -F "buildx rm --force ${builder}" "$log" >/dev/null
+  case "$name" in
+    preexisting-builder|builder-create-failure)
+      if grep -F "buildx rm --force ${builder}" "$log" >/dev/null; then
+        printf 'unowned builder cleanup found in fixture log: %s\n' "$name" >&2
+        exit 1
+      fi
+      ;;
+    *) grep -F "buildx rm --force ${builder}" "$log" >/dev/null ;;
+  esac
   if grep -F 'prune' "$log" >/dev/null; then
     printf 'broad prune found in fixture log: %s\n' "$name" >&2
     exit 1
@@ -329,6 +344,8 @@ run_case missing-digest false
 run_case load-failure false
 run_case identity-mismatch false
 run_case build-failure false
+run_case preexisting-builder false
+run_case builder-create-failure false
 
 grep -F 'reason=missing-or-empty-archive' "${fixture_root}/missing-archive.stderr" >/dev/null
 grep -F 'reason=missing-or-malformed-manifest-digest' "${fixture_root}/missing-digest.stderr" >/dev/null
@@ -336,6 +353,16 @@ grep -F 'ECR_SYNC_RUNTIME_IMAGE_LOAD_NATIVE_EXIT=42' "${fixture_root}/load-failu
 grep -F 'reason=image-load-failed:42' "${fixture_root}/load-failure.stderr" >/dev/null
 grep -F 'daemon-image-id-unrecognized' "${fixture_root}/identity-mismatch.stderr" >/dev/null
 grep -F 'ECR_SYNC_RUNTIME_BUILDX_BUILD_NATIVE_EXIT=23' "${fixture_root}/build-failure.stderr" >/dev/null
+grep -F 'reason=builder-instance-already-exists' \
+  "${fixture_root}/preexisting-builder.stderr" >/dev/null
+if grep -F 'buildx create' "${fixture_root}/preexisting-builder.docker.log" >/dev/null; then
+  printf 'builder create ran for preexisting builder fixture\n' >&2
+  exit 1
+fi
+grep -F 'ECR_SYNC_RUNTIME_BUILDER_CREATE_NATIVE_EXIT=31' \
+  "${fixture_root}/builder-create-failure.stderr" >/dev/null
+grep -F 'reason=builder-create-failed' \
+  "${fixture_root}/builder-create-failure.stderr" >/dev/null
 grep -F 'reason=buildkit-version-readback-invalid' \
   "${fixture_root}/buildkit-no-version.stderr" >/dev/null
 grep -F 'reason=buildkit-version-readback-count' \
@@ -343,4 +370,4 @@ grep -F 'reason=buildkit-version-readback-count' \
 grep -F 'reason=buildkit-version-readback-invalid' \
   "${fixture_root}/buildkit-malformed.stderr" >/dev/null
 
-printf 'ECR_SYNC_RUNTIME_IMAGE_EXPORT_FIXTURES_OK positive=4 negative=9 existing-positive=2 existing-negative=6 cleanup=exact-run-owned\n'
+printf 'ECR_SYNC_RUNTIME_IMAGE_EXPORT_FIXTURES_OK positive=4 negative=11 existing-positive=2 existing-negative=6 cleanup=exact-run-owned\n'

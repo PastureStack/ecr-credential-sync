@@ -54,8 +54,10 @@ the test suite never waits on production delays.
   and `abeea7a52865e60e1af4995d2449cdbaca762dc99689a829f15f0fd760766413`),
   then verifies Buildx `v0.36.1` and commit
   `1d8dde89b8aba914e05e45366770736fea1fd690`. It writes only below an empty,
-  canonical, caller-owned run root and never installs into a system directory
-  or global Docker CLI plugin directory.
+  canonical, caller-owned run root whose ancestors are root- or caller-owned;
+  any group- or world-writable ancestor must be sticky. Later operations stay
+  bound to that validated directory identity. The helper never installs into a
+  system directory or global Docker CLI plugin directory.
 - Every Dapper export records its manifest digest separately. The Buildx IID
   must equal the top-level configuration digest when that metadata field is
   present; otherwise it must equal the manifest digest selected by Buildx's

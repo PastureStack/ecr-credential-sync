@@ -186,6 +186,24 @@ exact_volume_absent() {
   [ -z "$names" ]
 }
 
+exact_builder_absent() {
+  local names
+  names=$("$docker_path" buildx ls --format '{{.Name}}') || return 1
+  if printf '%s\n' "$names" | awk -v expected="$builder" '
+      {
+        name = $0
+        sub(/[[:space:]]*\*$/, "", name)
+        if (name == expected) {
+          found = 1
+        }
+      }
+      END { exit found ? 0 : 1 }
+    '; then
+    return 1
+  fi
+  return 0
+}
+
 remove_builder() {
   local remove_exit=0
   [ "$builder_reserved" -eq 1 ] || return 0
@@ -264,6 +282,7 @@ docker_server_version=$("$docker_path" info --format '{{.ServerVersion}}') || fa
 if "$docker_path" image inspect "$image" >/dev/null 2>&1; then
   fail target-image-already-exists
 fi
+exact_builder_absent || fail builder-instance-already-exists
 exact_container_absent || fail builder-container-already-exists
 exact_volume_absent || fail builder-volume-already-exists
 
@@ -279,7 +298,6 @@ read -r buildx_module buildx_version buildx_commit buildx_extra <<<"$buildx_vers
 [ "$buildx_commit" = "$HOST_BUILDX_COMMIT" ] || fail buildx-commit-mismatch
 [ -z "${buildx_extra:-}" ] || fail buildx-version-extra-fields
 
-builder_reserved=1
 set +e
 "$docker_path" buildx create \
   --driver docker-container \
@@ -291,6 +309,7 @@ set -e
 printf 'ECR_SYNC_RUNTIME_BUILDER_CREATE_NATIVE_EXIT=%s builder=%s\n' \
   "$builder_create_exit" "$builder" >&2
 [ "$builder_create_exit" -eq 0 ] || fail builder-create-failed
+builder_reserved=1
 
 set +e
 "$docker_path" buildx inspect --bootstrap "$builder" >"$inspect_file"
