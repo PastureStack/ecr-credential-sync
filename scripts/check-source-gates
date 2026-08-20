@@ -26,6 +26,114 @@ reject_marker() {
   fi
 }
 
+go_telemetry_cleanup_contract() {
+  local checker_line=$4
+  local cleanup_command=$3
+  local dockerfile=$1
+  local source_dir=$2
+
+  awk \
+    -v checker_line="$checker_line" \
+    -v cleanup_command="$cleanup_command" \
+    -v source_dir="$source_dir" '
+      BEGIN {
+        source_line = "    cd " source_dir "; \\"
+        safe_line = "    cd /; \\"
+        cleanup_line = "    " cleanup_command "; \\"
+      }
+      {
+        line = $0
+        sub(/\r$/, "", line)
+        if (awaiting_checker) {
+          if (line != checker_line) {
+            invalid = 1
+          } else {
+            checker_count++
+          }
+          awaiting_checker = 0
+        }
+        if (line == source_line) {
+          source_count++
+          in_source_block = 1
+          post_source_cd_count = 0
+        } else if (in_source_block && index(line, "    cd ") == 1) {
+          post_source_cd_count++
+          if (line != safe_line) {
+            invalid = 1
+          }
+        }
+        if (line == cleanup_line) {
+          cleanup_count++
+          if (!in_source_block || previous != safe_line || post_source_cd_count != 1) {
+            invalid = 1
+          }
+          in_source_block = 0
+          awaiting_checker = 1
+        }
+        previous = line
+      }
+      END {
+        if (source_count != 1 || cleanup_count != 1 || checker_count != 1 ||
+            in_source_block || awaiting_checker || invalid) {
+          exit 1
+        }
+      }
+    ' "$dockerfile"
+}
+
+mutate_go_telemetry_cleanup_fixture() {
+  local input=$1
+  local mutation=$4
+  local output=$2
+  local source_dir=$3
+
+  case "$mutation" in
+    missing|late|wrong) ;;
+    *) return 1 ;;
+  esac
+
+  awk -v mutation="$mutation" -v source_dir="$source_dir" '
+    BEGIN {
+      source_line = "    cd " source_dir "; \\"
+      safe_line = "    cd /; \\"
+      wrong_line = "    cd /tmp; \\"
+    }
+    {
+      line = $0
+      sub(/\r$/, "", line)
+      if (line == source_line) {
+        in_source_block = 1
+        print line
+        next
+      }
+      if (in_source_block && line == safe_line && changed == 0) {
+        changed = 1
+        if (mutation == "missing") {
+          next
+        }
+        if (mutation == "wrong") {
+          print wrong_line
+          next
+        }
+        pending_late = 1
+        next
+      }
+      if (pending_late && index(line, "    rm -rf " source_dir " ") == 1) {
+        print line
+        print safe_line
+        pending_late = 0
+        next
+      }
+      print line
+    }
+    END {
+      if (changed != 1 || pending_late) {
+        exit 1
+      }
+    }
+  ' "$input" > "$output"
+}
+
 go_telemetry_dockerfile_contract() {
   local dockerfile=$1
   local first_go_version_line
@@ -63,6 +171,16 @@ go_telemetry_dockerfile_contract() {
   [ -n "$first_go_version_line" ] || return 1
   [ "$go_telemetry_off_line" -lt "$go_telemetry_mode_line" ] || return 1
   [ "$go_telemetry_mode_line" -lt "$first_go_version_line" ] || return 1
+  go_telemetry_cleanup_contract \
+    "$dockerfile" \
+    /tmp/docker-cli-src \
+    'rm -rf /tmp/docker-cli-src /tmp/docker-cli.tar.gz /tmp/docker-go-mod /tmp/go-build-cache' \
+    '    bash /usr/local/libexec/pasturestack/check-go-telemetry-state /tmp/go-config/go/telemetry "${SOURCE_DATE_EPOCH}" /usr/local/go/bin/go' || return 1
+  go_telemetry_cleanup_contract \
+    "$dockerfile" \
+    /tmp/buildx-src \
+    'rm -rf /tmp/buildx-src /tmp/buildx.tar.gz /tmp/buildx-deps.txt /tmp/go-build-cache' \
+    '    bash /usr/local/libexec/pasturestack/check-go-telemetry-state /tmp/go-config/go/telemetry "${SOURCE_DATE_EPOCH}" /usr/local/go/bin/go' || return 1
 }
 
 brand_source_has_forbidden_reference() {
@@ -106,6 +224,7 @@ require_marker scripts/test-go-telemetry-state 'mode-non-exact' ECR_SYNC_GO_TELE
 require_marker scripts/test-go-telemetry-state 'go-command-counter-write' ECR_SYNC_GO_TELEMETRY_COUNTER_REGRESSION_MISSING
 require_marker scripts/test-go-telemetry-state 'count-non-file-state' ECR_SYNC_GO_TELEMETRY_COUNT_REPRESENTATION_REGRESSION_MISSING
 require_marker scripts/check-source-gates 'env-only-control.Dockerfile' ECR_SYNC_GO_TELEMETRY_SOURCE_REGRESSION_MISSING
+require_marker scripts/check-source-gates 'for mutation in missing late wrong; do' ECR_SYNC_GO_TELEMETRY_CWD_SOURCE_REGRESSION_MISSING
 require_marker .github/workflows/supply-chain.yml '            scripts/check-go-telemetry-state \' ECR_SYNC_GO_TELEMETRY_CHECKER_SOURCE_INPUT_MISSING
 require_marker .github/workflows/supply-chain.yml '            scripts/test-go-telemetry-state \' ECR_SYNC_GO_TELEMETRY_FIXTURE_SOURCE_INPUT_MISSING
 require_marker Dockerfile.dapper 'ARG DOCKER_VERSION=29.7.2' ECR_SYNC_DOCKER_VERSION_NOT_CURRENT
@@ -310,6 +429,17 @@ if ! (
   if go_telemetry_dockerfile_contract "$source_fixture"; then
     exit 1
   fi
+  for source_dir in /tmp/docker-cli-src /tmp/buildx-src; do
+    component=${source_dir##*/}
+    for mutation in missing late wrong; do
+      source_fixture="$source_fixture_root/${component}-${mutation}-cwd.Dockerfile"
+      mutate_go_telemetry_cleanup_fixture \
+        Dockerfile.dapper "$source_fixture" "$source_dir" "$mutation"
+      if go_telemetry_dockerfile_contract "$source_fixture"; then
+        exit 1
+      fi
+    done
+  done
 ); then
   printf 'ECR_SYNC_GO_TELEMETRY_SOURCE_FIXTURE_INVALID\n' >&2
   failure_count=$((failure_count + 1))
@@ -715,5 +845,5 @@ if [ "$failure_count" -ne 0 ]; then
   exit 1
 fi
 
-printf 'ECR_SYNC_SOURCE_GATES_OK go=1.26.6 go_telemetry=off-source-date-epoch-utc go_telemetry_readbacks=5 docker=29.7.2 docker_cli_source_built=go1.26.6 buildx=0.36.1 dapper_buildx_executable_version=v0.36.1 jq=1.8.1 jq_package=1.8.1-4ubuntu2 host_buildx=0.36.1 host_buildx_binary=sha256:48af8a397ebd60178778bf63611dbcebe5f5e7a9be90eb9147b24b9587455778 host_buildkit=0.32.2 buildkit_version_readback=exact-single-record dapper_identity=buildx-iid+metadata-config+daemon-config-or-manifest ubuntu=26.04 snapshot=20260808T000000Z non_root=1 legal_files=%s endpoint_override=bounded brand_gate=tracked_source_only runtime_manifest_access=default-user-read-only buildx_legacy_module_removed=1 runtime_mtime_normalization=all_local_copy_inputs dapper_reproducibility=buildkit-rewrite-timestamp runtime_export=docker-archive-explicit-load runtime_builder=exact-run-owned-pinned sbom_trivy_gate=1\n' \
+printf 'ECR_SYNC_SOURCE_GATES_OK go=1.26.6 go_telemetry=off-source-date-epoch-utc go_telemetry_readbacks=5 go_telemetry_cleanup_cwd=two-callers-explicit-root-before-delete docker=29.7.2 docker_cli_source_built=go1.26.6 buildx=0.36.1 dapper_buildx_executable_version=v0.36.1 jq=1.8.1 jq_package=1.8.1-4ubuntu2 host_buildx=0.36.1 host_buildx_binary=sha256:48af8a397ebd60178778bf63611dbcebe5f5e7a9be90eb9147b24b9587455778 host_buildkit=0.32.2 buildkit_version_readback=exact-single-record dapper_identity=buildx-iid+metadata-config+daemon-config-or-manifest ubuntu=26.04 snapshot=20260808T000000Z non_root=1 legal_files=%s endpoint_override=bounded brand_gate=tracked_source_only runtime_manifest_access=default-user-read-only buildx_legacy_module_removed=1 runtime_mtime_normalization=all_local_copy_inputs dapper_reproducibility=buildkit-rewrite-timestamp runtime_export=docker-archive-explicit-load runtime_builder=exact-run-owned-pinned sbom_trivy_gate=1\n' \
   "$legal_count"

@@ -182,6 +182,7 @@ RUN set -eux; \
         /usr/bin/docker \
         /usr/share/pasturestack/manifests/docker-cli-build.tsv \
         /usr/share/pasturestack/manifests/docker-cli-go-version.txt; \
+    cd /; \
     rm -rf /tmp/docker-cli-src /tmp/docker-cli.tar.gz /tmp/docker-go-mod /tmp/go-build-cache; \
     bash /usr/local/libexec/pasturestack/check-go-telemetry-state /tmp/go-config/go/telemetry "${SOURCE_DATE_EPOCH}" /usr/local/go/bin/go
 
@@ -215,6 +216,7 @@ RUN set -eux; \
     touch --no-dereference --date="@${SOURCE_DATE_EPOCH}" \
         /usr/libexec/docker/cli-plugins/docker-buildx \
         /usr/share/pasturestack/manifests/buildx-go-version.txt; \
+    cd /; \
     rm -rf /tmp/buildx-src /tmp/buildx.tar.gz /tmp/buildx-deps.txt /tmp/go-build-cache; \
     bash /usr/local/libexec/pasturestack/check-go-telemetry-state /tmp/go-config/go/telemetry "${SOURCE_DATE_EPOCH}" /usr/local/go/bin/go
 
