@@ -355,8 +355,9 @@ if ! (
     test "${HOST_BUILDX_CHECKSUMS_SHA256-}" = 'abeea7a52865e60e1af4995d2449cdbaca762dc99689a829f15f0fd760766413' &&
     test "${HOST_BUILDKIT_VERSION-}" = 'v0.32.2' &&
     test "${HOST_BUILDKIT_IMAGE-}" = 'moby/buildkit:v0.32.2@sha256:28a898719c18a33f4e8000685287fa36fd0dd9560c6440227d3a732d79bb41d8' &&
-    test "${SETUP_BUILDX_ACTION_VERSION-}" = 'v4.2.0' &&
-    test "${SETUP_BUILDX_ACTION_COMMIT-}" = 'bb05f3f5519dd87d3ba754cc423b652a5edd6d2c'
+    test "${HOST_BUILDX_INSTALL_METHOD-}" = 'repository-locked-release-installer' &&
+    test "${HOST_BUILDX_INSTALLER_PATH-}" = 'scripts/install-locked-host-buildx' &&
+    test "${HOST_BUILDX_PLUGIN_RELATIVE_PATH-}" = 'cli-plugins/docker-buildx'
 ); then
   printf 'ECR_SYNC_HOST_BUILD_TOOLCHAIN_LOCK_INVALID\n' >&2
   failure_count=$((failure_count + 1))
@@ -377,9 +378,25 @@ require_marker .github/workflows/supply-chain.yml \
   'aquasec/trivy:0.74.0@sha256:62b1e65e8869bc4b4c6aa4fa2b21595256c7c2f6018a9d9ad61caf87187c1969' \
   ECR_SYNC_TRIVY_NOT_PINNED
 require_marker .github/workflows/supply-chain.yml \
-  'docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0' \
-  ECR_SYNC_HOST_BUILDX_ACTION_NOT_PINNED
-require_marker .github/workflows/supply-chain.yml 'version: v0.36.1' ECR_SYNC_HOST_BUILDX_VERSION_NOT_PINNED
+  'test "$HOST_BUILDX_INSTALL_METHOD" = repository-locked-release-installer' \
+  ECR_SYNC_HOST_BUILDX_INSTALL_METHOD_GATE_MISSING
+require_marker .github/workflows/supply-chain.yml \
+  'locked_buildx="$(bash "$HOST_BUILDX_INSTALLER_PATH" "$install_root")"' \
+  ECR_SYNC_HOST_BUILDX_INSTALLER_CALL_MISSING
+require_marker .github/workflows/supply-chain.yml \
+  'docker_buildx_plugin="${docker_config_root}/${HOST_BUILDX_PLUGIN_RELATIVE_PATH}"' \
+  ECR_SYNC_HOST_BUILDX_PLUGIN_PATH_MISSING
+require_marker .github/workflows/supply-chain.yml \
+  'export DAPPER_BUILDX_COMMAND="$locked_buildx"' \
+  ECR_SYNC_DAPPER_BUILDX_COMMAND_AUTHORITY_MISSING
+require_marker .github/workflows/supply-chain.yml \
+  'printf '\''DOCKER_CONFIG=%s\n'\'' "$DOCKER_CONFIG"' \
+  ECR_SYNC_DOCKER_CONFIG_ENV_PERSISTENCE_MISSING
+require_marker .github/workflows/supply-chain.yml \
+  'cleanup_exact_home_root()' ECR_SYNC_HOST_BUILDX_EXACT_CLEANUP_MISSING
+require_marker .github/workflows/supply-chain.yml \
+  'current_identity="$(stat -Lc '\''%d:%i:%u:%g:%a'\'' -- "$root")"' \
+  ECR_SYNC_HOST_BUILDX_CLEANUP_IDENTITY_GATE_MISSING
 require_marker .github/workflows/supply-chain.yml \
   'moby/buildkit:v0.32.2@sha256:28a898719c18a33f4e8000685287fa36fd0dd9560c6440227d3a732d79bb41d8' \
   ECR_SYNC_HOST_BUILDKIT_IMAGE_NOT_PINNED
@@ -391,11 +408,12 @@ require_marker .github/workflows/supply-chain.yml 'scripts/install-locked-host-b
 require_marker .github/workflows/supply-chain.yml 'scripts/test-install-locked-host-buildx' ECR_SYNC_LOCKED_BUILDX_TEST_EVIDENCE_MISSING
 reject_marker .github/workflows/supply-chain.yml 'moby/buildkit:buildx-stable-1' ECR_SYNC_MUTABLE_BUILDKIT_STABLE_FALLBACK_PRESENT
 reject_marker .github/workflows/supply-chain.yml 'moby/buildkit:latest' ECR_SYNC_MUTABLE_BUILDKIT_LATEST_PRESENT
-reject_marker .github/workflows/supply-chain.yml 'docker/setup-buildx-action@v' ECR_SYNC_MUTABLE_BUILDX_ACTION_PRESENT
+reject_marker .github/workflows/supply-chain.yml 'docker/setup-buildx-action@' ECR_SYNC_EXTERNAL_BUILDX_ACTION_PRESENT
 reject_marker .github/workflows/supply-chain.yml 'docker builder prune' ECR_SYNC_WORKFLOW_BROAD_BUILDER_PRUNE_PRESENT
 reject_marker toolchain/host-build-toolchain.lock 'http://' ECR_SYNC_HOST_BUILDX_INSECURE_ASSET_URL_PRESENT
 reject_marker toolchain/host-build-toolchain.lock 'releases/latest' ECR_SYNC_HOST_BUILDX_MUTABLE_RELEASE_URL_PRESENT
 reject_marker toolchain/host-build-toolchain.lock '/latest/' ECR_SYNC_HOST_BUILDX_MUTABLE_ASSET_URL_PRESENT
+reject_marker toolchain/host-build-toolchain.lock 'SETUP_BUILDX_ACTION_' ECR_SYNC_OBSOLETE_BUILDX_ACTION_LOCK_PRESENT
 require_marker .github/workflows/supply-chain.yml 'retention-days: 30' ECR_SYNC_EVIDENCE_RETENTION_NOT_30_DAYS
 require_marker .github/workflows/supply-chain.yml 'runtime.cdx.json' ECR_SYNC_RUNTIME_SBOM_MISSING
 require_marker .github/workflows/supply-chain.yml 'dapper.cdx.json' ECR_SYNC_DAPPER_SBOM_MISSING
@@ -428,14 +446,16 @@ require_marker scripts/generate-source-sbom.py 'pasturestack:host-buildx-asset-s
 require_marker scripts/generate-source-sbom.py 'pasturestack:host-buildx-checksums-url' ECR_SYNC_SOURCE_SBOM_HOST_BUILDX_CHECKSUMS_URL_MISSING
 require_marker scripts/generate-source-sbom.py 'pasturestack:host-buildx-checksums-sha256' ECR_SYNC_SOURCE_SBOM_HOST_BUILDX_CHECKSUMS_SHA_MISSING
 require_marker scripts/generate-source-sbom.py 'pasturestack:host-buildkit-image' ECR_SYNC_SOURCE_SBOM_HOST_BUILDKIT_MISSING
-require_marker scripts/generate-source-sbom.py 'pasturestack:setup-buildx-action-commit' ECR_SYNC_SOURCE_SBOM_BUILDX_ACTION_MISSING
+require_marker scripts/generate-source-sbom.py 'pasturestack:host-buildx-install-method' ECR_SYNC_SOURCE_SBOM_BUILDX_INSTALL_METHOD_MISSING
+require_marker scripts/generate-source-sbom.py 'pasturestack:host-buildx-installer-path' ECR_SYNC_SOURCE_SBOM_BUILDX_INSTALLER_PATH_MISSING
+require_marker scripts/generate-source-sbom.py 'pasturestack:host-buildx-plugin-relative-path' ECR_SYNC_SOURCE_SBOM_BUILDX_PLUGIN_PATH_MISSING
 require_marker scripts/generate-source-sbom.py 'pasturestack:ubuntu-apt-lock-sha256' ECR_SYNC_SOURCE_SBOM_APT_LOCK_MISSING
 require_marker scripts/generate-source-sbom.py 'pasturestack:ubuntu-apt-snapshot' ECR_SYNC_SOURCE_SBOM_APT_SNAPSHOT_MISSING
 require_marker scripts/generate-source-sbom.py 'pasturestack:dapper-jq-version' ECR_SYNC_SOURCE_SBOM_JQ_VERSION_MISSING
 require_marker scripts/generate-source-sbom.py 'pasturestack:runtime-image-export' ECR_SYNC_SOURCE_SBOM_RUNTIME_EXPORT_CONTRACT_MISSING
-require_marker README.md 'docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c' ECR_SYNC_HOST_BUILDX_DOC_MISSING
 require_marker README.md 'moby/buildkit:v0.32.2@sha256:28a898719c18a33f4e8000685287fa36fd0dd9560c6440227d3a732d79bb41d8' ECR_SYNC_HOST_BUILDKIT_DOC_MISSING
 require_marker README.md 'scripts/install-locked-host-buildx' ECR_SYNC_LOCKED_HOST_BUILDX_DOC_MISSING
+require_marker README.md '`DOCKER_CONFIG`' ECR_SYNC_HOST_BUILDX_DOCKER_CONFIG_DOC_MISSING
 require_marker README.md '48af8a397ebd60178778bf63611dbcebe5f5e7a9be90eb9147b24b9587455778' ECR_SYNC_LOCKED_HOST_BUILDX_README_DIGEST_MISSING
 require_marker README.md 'abeea7a52865e60e1af4995d2449cdbaca762dc99689a829f15f0fd760766413' ECR_SYNC_LOCKED_HOST_BUILDX_CHECKSUMS_README_DIGEST_MISSING
 require_marker README.md '`jq` `1.8.1-4ubuntu2`' ECR_SYNC_DAPPER_JQ_README_VERSION_MISSING

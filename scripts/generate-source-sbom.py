@@ -22,8 +22,9 @@ HOST_TOOLCHAIN_KEYS = (
     "HOST_BUILDX_CHECKSUMS_SHA256",
     "HOST_BUILDKIT_VERSION",
     "HOST_BUILDKIT_IMAGE",
-    "SETUP_BUILDX_ACTION_VERSION",
-    "SETUP_BUILDX_ACTION_COMMIT",
+    "HOST_BUILDX_INSTALL_METHOD",
+    "HOST_BUILDX_INSTALLER_PATH",
+    "HOST_BUILDX_PLUGIN_RELATIVE_PATH",
 )
 
 UBUNTU_APT_KEYS = (
@@ -235,12 +236,16 @@ def main() -> int:
                     "value": host_toolchain["HOST_BUILDKIT_IMAGE"],
                 },
                 {
-                    "name": "pasturestack:setup-buildx-action-version",
-                    "value": host_toolchain["SETUP_BUILDX_ACTION_VERSION"],
+                    "name": "pasturestack:host-buildx-install-method",
+                    "value": host_toolchain["HOST_BUILDX_INSTALL_METHOD"],
                 },
                 {
-                    "name": "pasturestack:setup-buildx-action-commit",
-                    "value": host_toolchain["SETUP_BUILDX_ACTION_COMMIT"],
+                    "name": "pasturestack:host-buildx-installer-path",
+                    "value": host_toolchain["HOST_BUILDX_INSTALLER_PATH"],
+                },
+                {
+                    "name": "pasturestack:host-buildx-plugin-relative-path",
+                    "value": host_toolchain["HOST_BUILDX_PLUGIN_RELATIVE_PATH"],
                 },
             ],
         },

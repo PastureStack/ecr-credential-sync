@@ -89,10 +89,12 @@ and embedded Go build information. It also locks Buildx 0.36.1 and installs
 `jq` `1.8.1-4ubuntu2` as the fail-closed Dapper identity metadata parser. A
 checksum-locked Buildx patch removes its sole compiled dependency on the legacy
 Docker module.
-The host build client is installed by
-`docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c`
-(`v4.2.0`) as Buildx `v0.36.1`, while every Dapper builder uses BuildKit
-`v0.32.2` from
+The host build client is installed as Buildx `v0.36.1` by the repository-owned
+`scripts/install-locked-host-buildx` verifier. GitHub Actions gives the verified
+release binary an empty, caller-owned mode-`0700` run root under `$HOME`, then
+copies it into a separate run-owned `DOCKER_CONFIG` at
+`cli-plugins/docker-buildx`. `DAPPER_BUILDX_COMMAND` remains bound to the
+installer-returned binary, while every Dapper builder uses BuildKit `v0.32.2` from
 `moby/buildkit:v0.32.2@sha256:28a898719c18a33f4e8000685287fa36fd0dd9560c6440227d3a732d79bb41d8`.
 These host-side locks are recorded in `toolchain/host-build-toolchain.lock` and
 the source SBOM. The lock also binds the official Linux amd64 Buildx release
@@ -134,9 +136,11 @@ commit before returning the executable path. It refuses existing, symlinked,
 non-canonical, system, and global Docker plugin destinations. Every path
 ancestor must be owned by root or the caller; group- or world-writable
 ancestors must use the sticky bit. The helper binds subsequent operations to
-the validated run-root identity and never writes to `/usr` or the user's Docker
-CLI plugin directory. GitHub Actions continues to use the commit-pinned setup
-action rather than this development fallback.
+the validated run-root identity and never writes to `/usr` or the user's global
+Docker CLI plugin directory. GitHub Actions uses this same verifier and checks
+the copied plugin's hash, mode, version, and commit before persisting its isolated
+`DOCKER_CONFIG`. Its always-run cleanup removes only the two exact run roots
+after their paths, ownership, modes, and directory identities are revalidated.
 The development packaging harness must use this exact command for builder
 create, inspect, and removal, and pass it to `make` with the pinned builder.
 

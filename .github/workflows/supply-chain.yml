@@ -34,16 +34,114 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Set up pinned host Buildx and BuildKit
-        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
-        with:
-          version: v0.36.1
-          driver: docker-container
-          driver-opts: |
-            image=moby/buildkit:v0.32.2@sha256:28a898719c18a33f4e8000685287fa36fd0dd9560c6440227d3a732d79bb41d8
-            network=host
-          use: false
-          cache-binary: false
+      - name: Install pinned host Buildx without external actions
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          source toolchain/host-build-toolchain.lock
+          test "$HOST_BUILDX_INSTALL_METHOD" = repository-locked-release-installer
+          test "$HOST_BUILDX_INSTALLER_PATH" = scripts/install-locked-host-buildx
+          test "$HOST_BUILDX_PLUGIN_RELATIVE_PATH" = cli-plugins/docker-buildx
+          for required_command in chmod cp find grep id mkdir realpath sha256sum stat; do
+            command -v "$required_command" >/dev/null
+          done
+          [[ "${GITHUB_RUN_ID:-}" =~ ^[0-9]+$ ]]
+          [[ "${GITHUB_RUN_ATTEMPT:-}" =~ ^[0-9]+$ ]]
+          [[ "${GITHUB_JOB:-}" =~ ^[A-Za-z0-9_-]+$ ]]
+          test -n "${HOME:-}"
+          canonical_home="$(realpath -e -- "$HOME")"
+          test -d "$canonical_home"
+          test ! -L "$canonical_home"
+          test -O "$canonical_home"
+          test -z "$(find "$canonical_home" -maxdepth 0 -perm /022 -print -quit)"
+
+          caller_uid="$(id -u)"
+          caller_gid="$(id -g)"
+          path_component="$canonical_home"
+          while [ "$path_component" != / ]; do
+            parent="${path_component%/*}"
+            test -n "$parent" || parent=/
+            parent_uid="$(stat -Lc '%u' -- "$parent")"
+            case "$parent_uid" in
+              0|"$caller_uid") ;;
+              *) exit 1 ;;
+            esac
+            if find "$parent" -maxdepth 0 -perm /022 -print -quit | grep -q .; then
+              find "$parent" -maxdepth 0 -perm -1000 -print -quit | grep -q .
+            fi
+            path_component="$parent"
+          done
+
+          run_identity="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${GITHUB_JOB}"
+          install_root="${canonical_home}/.pasturestack-ecr-buildx-install-${run_identity}"
+          docker_config_root="${canonical_home}/.pasturestack-ecr-docker-config-${run_identity}"
+
+          create_run_root() {
+            local root="$1"
+            test ! -e "$root"
+            test ! -L "$root"
+            mkdir -m 0700 -- "$root"
+            test -d "$root"
+            test ! -L "$root"
+            test -O "$root"
+            test "$(realpath -e -- "$root")" = "$root"
+            test "$(stat -Lc '%u:%g:%a' -- "$root")" = "${caller_uid}:${caller_gid}:700"
+          }
+
+          create_run_root "$install_root"
+          install_root_identity="$(stat -Lc '%d:%i:%u:%g:%a' -- "$install_root")"
+          {
+            printf 'ECR_SYNC_BUILDX_INSTALL_ROOT=%s\n' "$install_root"
+            printf 'ECR_SYNC_BUILDX_INSTALL_ROOT_IDENTITY=%s\n' "$install_root_identity"
+          } >> "$GITHUB_ENV"
+
+          create_run_root "$docker_config_root"
+          docker_config_root_identity="$(stat -Lc '%d:%i:%u:%g:%a' -- "$docker_config_root")"
+          {
+            printf 'ECR_SYNC_DOCKER_CONFIG_ROOT=%s\n' "$docker_config_root"
+            printf 'ECR_SYNC_DOCKER_CONFIG_ROOT_IDENTITY=%s\n' "$docker_config_root_identity"
+          } >> "$GITHUB_ENV"
+
+          locked_buildx="$(bash "$HOST_BUILDX_INSTALLER_PATH" "$install_root")"
+          test "$locked_buildx" = "${install_root}/bin/docker-buildx"
+          test ! -L "$locked_buildx"
+          test -O "$locked_buildx"
+          test "$(stat -Lc '%a' -- "$locked_buildx")" = 555
+          locked_buildx_sha="$(sha256sum -- "$locked_buildx")"
+          locked_buildx_sha="${locked_buildx_sha%% *}"
+          test "$locked_buildx_sha" = "$HOST_BUILDX_ASSET_SHA256"
+          read -r buildx_module buildx_version buildx_commit buildx_extra \
+            <<<"$("$locked_buildx" version)"
+          test "$buildx_module" = github.com/docker/buildx
+          test "$buildx_version" = "$HOST_BUILDX_VERSION"
+          test "$buildx_commit" = "$HOST_BUILDX_COMMIT"
+          test -z "${buildx_extra:-}"
+
+          cli_plugins="${docker_config_root}/cli-plugins"
+          docker_buildx_plugin="${docker_config_root}/${HOST_BUILDX_PLUGIN_RELATIVE_PATH}"
+          mkdir -m 0700 -- "$cli_plugins"
+          test ! -e "$docker_buildx_plugin"
+          test ! -L "$docker_buildx_plugin"
+          cp -- "$locked_buildx" "$docker_buildx_plugin"
+          chmod 0555 "$docker_buildx_plugin"
+          test ! -L "$docker_buildx_plugin"
+          test -O "$docker_buildx_plugin"
+          test "$(stat -Lc '%a' -- "$docker_buildx_plugin")" = 555
+          plugin_sha="$(sha256sum -- "$docker_buildx_plugin")"
+          plugin_sha="${plugin_sha%% *}"
+          test "$plugin_sha" = "$HOST_BUILDX_ASSET_SHA256"
+          test "$(stat -Lc '%d:%i:%u:%g:%a' -- "$install_root")" = "$install_root_identity"
+          test "$(stat -Lc '%d:%i:%u:%g:%a' -- "$docker_config_root")" = "$docker_config_root_identity"
+
+          export DOCKER_CONFIG="$docker_config_root"
+          export DAPPER_BUILDX_COMMAND="$locked_buildx"
+          test "$(docker buildx version)" = \
+            "github.com/docker/buildx ${HOST_BUILDX_VERSION} ${HOST_BUILDX_COMMIT}"
+          {
+            printf 'DOCKER_CONFIG=%s\n' "$DOCKER_CONFIG"
+            printf 'DAPPER_BUILDX_COMMAND=%s\n' "$DAPPER_BUILDX_COMMAND"
+          } >> "$GITHUB_ENV"
 
       - name: Record immutable source inputs
         shell: bash
@@ -86,9 +184,19 @@ jobs:
           test "$HOST_BUILDX_COMMIT" = 1d8dde89b8aba914e05e45366770736fea1fd690
           test "$HOST_BUILDKIT_VERSION" = v0.32.2
           test "$HOST_BUILDKIT_IMAGE" = "$DAPPER_BUILDKIT_IMAGE"
-          test "$SETUP_BUILDX_ACTION_VERSION" = v4.2.0
-          test "$SETUP_BUILDX_ACTION_COMMIT" = bb05f3f5519dd87d3ba754cc423b652a5edd6d2c
+          test "$HOST_BUILDX_INSTALL_METHOD" = repository-locked-release-installer
+          test "$HOST_BUILDX_INSTALLER_PATH" = scripts/install-locked-host-buildx
+          test "$HOST_BUILDX_PLUGIN_RELATIVE_PATH" = cli-plugins/docker-buildx
           cp toolchain/host-build-toolchain.lock evidence/host-build-toolchain.lock
+          test "$DAPPER_BUILDX_COMMAND" = \
+            "${ECR_SYNC_BUILDX_INSTALL_ROOT}/bin/docker-buildx"
+          test "$DOCKER_CONFIG" = "$ECR_SYNC_DOCKER_CONFIG_ROOT"
+          host_buildx_sha="$(sha256sum -- "$DAPPER_BUILDX_COMMAND")"
+          host_buildx_sha="${host_buildx_sha%% *}"
+          test "$host_buildx_sha" = "$HOST_BUILDX_ASSET_SHA256"
+          test "$(sha256sum -- "$DOCKER_CONFIG/$HOST_BUILDX_PLUGIN_RELATIVE_PATH" | cut -d ' ' -f 1)" = \
+            "$HOST_BUILDX_ASSET_SHA256"
+          printf '%s\n' "$host_buildx_sha" > evidence/host-buildx-binary.sha256
           docker buildx version | tee evidence/host-buildx-version.txt
           read -r buildx_module buildx_version buildx_commit \
             < evidence/host-buildx-version.txt
@@ -713,4 +821,40 @@ jobs:
               docker image rm -f "$image" >/dev/null
             fi
           done
+
+          cleanup_exact_home_root() {
+            local root="$1"
+            local expected_identity="$2"
+            local expected_basename="$3"
+            local canonical_home current_identity expected_root
+
+            test -n "$root" || return 0
+            test -n "$expected_identity"
+            canonical_home="$(realpath -e -- "$HOME")"
+            expected_root="${canonical_home}/${expected_basename}"
+            test "$root" = "$expected_root"
+            if [ ! -e "$root" ] && [ ! -L "$root" ]; then
+              return 0
+            fi
+            test -d "$root"
+            test ! -L "$root"
+            test -O "$root"
+            test "$(realpath -e -- "$root")" = "$root"
+            test "$(stat -Lc '%a' -- "$root")" = 700
+            current_identity="$(stat -Lc '%d:%i:%u:%g:%a' -- "$root")"
+            test "$current_identity" = "$expected_identity"
+            rm -rf -- "$root"
+            test ! -e "$root"
+            test ! -L "$root"
+          }
+
+          run_identity="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${GITHUB_JOB}"
+          cleanup_exact_home_root \
+            "${ECR_SYNC_BUILDX_INSTALL_ROOT:-}" \
+            "${ECR_SYNC_BUILDX_INSTALL_ROOT_IDENTITY:-}" \
+            ".pasturestack-ecr-buildx-install-${run_identity}"
+          cleanup_exact_home_root \
+            "${ECR_SYNC_DOCKER_CONFIG_ROOT:-}" \
+            "${ECR_SYNC_DOCKER_CONFIG_ROOT_IDENTITY:-}" \
+            ".pasturestack-ecr-docker-config-${run_identity}"
           rm -rf bin dist evidence "$RUNNER_TEMP/trivy-cache"

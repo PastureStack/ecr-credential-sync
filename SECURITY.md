@@ -42,9 +42,13 @@ the test suite never waits on production delays.
   uses Go 1.26.6, Docker CLI 29.7.2, and the checksum-patched Buildx 0.36.1
   source. Its identity resolver uses `jq` `1.8.1-4ubuntu2`, installed from the
   same dated Ubuntu snapshot and verified against the direct package lock.
-- The host Buildx client is `v0.36.1`, installed by
-  `docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c`
-  (`v4.2.0`). Dapper builders use BuildKit `v0.32.2` from
+- The host Buildx client is `v0.36.1`, installed by the repository-owned
+  `scripts/install-locked-host-buildx` verifier into an empty, caller-owned
+  mode-`0700` run root below `$HOME`. CI copies the verified binary into a
+  separate run-owned `DOCKER_CONFIG` at `cli-plugins/docker-buildx`, verifies
+  its hash, owner, mode, version, and commit, and binds
+  `DAPPER_BUILDX_COMMAND` to the installer-returned binary. Dapper builders use
+  BuildKit `v0.32.2` from
   `moby/buildkit:v0.32.2@sha256:28a898719c18a33f4e8000685287fa36fd0dd9560c6440227d3a732d79bb41d8`.
   The source gate rejects mutable BuildKit fallbacks.
 - Development packaging may use `scripts/install-locked-host-buildx` only when
@@ -57,7 +61,9 @@ the test suite never waits on production delays.
   canonical, caller-owned run root whose ancestors are root- or caller-owned;
   any group- or world-writable ancestor must be sticky. Later operations stay
   bound to that validated directory identity. The helper never installs into a
-  system directory or global Docker CLI plugin directory.
+  system directory or global Docker CLI plugin directory. Always-run cleanup
+  revalidates the exact two run-root paths, identities, owners, and mode `0700`
+  before deleting only those directories.
 - Every Dapper export records its manifest digest separately. The Buildx IID
   must equal the top-level configuration digest when that metadata field is
   present; otherwise it must equal the manifest digest selected by Buildx's
