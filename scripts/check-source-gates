@@ -496,10 +496,12 @@ fi
 
 if ! bash -n scripts/build scripts/build-runtime-image scripts/check-source-gates scripts/ci scripts/entry \
   scripts/check-buildx-module-versions scripts/check-go-telemetry-state \
+  scripts/cleanup-exact-trivy-cache \
   scripts/install-locked-host-buildx scripts/normalize-runtime-context-mtimes \
   scripts/package scripts/parse-buildx-buildkit-version scripts/release \
   scripts/resolve-dapper-image-identity scripts/test \
   scripts/test-buildx-buildkit-version scripts/test-buildx-module-versions \
+  scripts/test-cleanup-exact-trivy-cache \
   scripts/test-dapper-image-identity scripts/test-install-locked-host-buildx \
   scripts/test-go-telemetry-state \
   scripts/test-runtime-image-export-load \
@@ -515,6 +517,11 @@ fi
 
 if ! bash scripts/test-buildx-module-versions; then
   printf 'ECR_SYNC_BUILDX_MODULE_FIXTURES_INVALID\n' >&2
+  failure_count=$((failure_count + 1))
+fi
+
+if ! bash scripts/test-cleanup-exact-trivy-cache; then
+  printf 'ECR_SYNC_TRIVY_CACHE_CLEANUP_FIXTURES_INVALID\n' >&2
   failure_count=$((failure_count + 1))
 fi
 
@@ -744,10 +751,43 @@ require_marker .github/workflows/supply-chain.yml 'CVE-2026-56865' ECR_SYNC_BUIL
 require_marker .github/workflows/supply-chain.yml 'trivy-database-files.tsv' ECR_SYNC_TRIVY_DB_BYTES_IDENTITY_MISSING
 require_marker .github/workflows/supply-chain.yml 'trivy-database-updated-at.txt' ECR_SYNC_TRIVY_DB_UPDATED_AT_MISSING
 require_marker .github/workflows/supply-chain.yml 'trivy-database-metadata.json' ECR_SYNC_TRIVY_DB_METADATA_EVIDENCE_MISSING
+require_marker .github/workflows/supply-chain.yml 'trivy-cache-entries.tsv' ECR_SYNC_TRIVY_CACHE_ENTRY_EVIDENCE_MISSING
 require_marker .github/workflows/supply-chain.yml 'trivy-cache-ownership.tsv' ECR_SYNC_TRIVY_CACHE_OWNERSHIP_EVIDENCE_MISSING
-require_marker .github/workflows/supply-chain.yml 'cleanup_exact_trivy_cache()' ECR_SYNC_TRIVY_EXACT_CLEANUP_MISSING
-require_marker .github/workflows/supply-chain.yml 'sudo chown -- "${caller_uid}:${caller_gid}" "$path"' ECR_SYNC_TRIVY_EXACT_OWNERSHIP_REPAIR_MISSING
+require_marker .github/workflows/supply-chain.yml 'sudo find -P "$trivy_cache" -xdev -mindepth 1' ECR_SYNC_TRIVY_ENTRY_ENUMERATION_NOT_PRIVILEGED
+require_marker .github/workflows/supply-chain.yml 'sudo find -P "$trivy_cache" -xdev -mindepth 0 -maxdepth 2' ECR_SYNC_TRIVY_OWNERSHIP_ENUMERATION_NOT_PRIVILEGED
+require_marker .github/workflows/supply-chain.yml 'bash scripts/cleanup-exact-trivy-cache \' ECR_SYNC_TRIVY_EXACT_CLEANUP_MISSING
+require_marker .github/workflows/supply-chain.yml '            scripts/cleanup-exact-trivy-cache \' ECR_SYNC_TRIVY_CLEANER_SOURCE_INPUT_MISSING
+require_marker .github/workflows/supply-chain.yml '            scripts/test-cleanup-exact-trivy-cache \' ECR_SYNC_TRIVY_CLEANER_FIXTURE_SOURCE_INPUT_MISSING
+require_marker scripts/cleanup-exact-trivy-cache 'sudo find -P "$root" -xdev -mindepth 1' ECR_SYNC_TRIVY_CLEANUP_ENUMERATION_NOT_PRIVILEGED
+require_marker scripts/cleanup-exact-trivy-cache "expected_inventory=\$'db\\ndb/metadata.json\\ndb/trivy.db\\nfanal'" ECR_SYNC_TRIVY_CLEANUP_ALLOWLIST_MISSING
+require_marker scripts/cleanup-exact-trivy-cache 'sudo chown -- "${caller_uid}:${caller_gid}" "$path"' ECR_SYNC_TRIVY_EXACT_OWNERSHIP_REPAIR_MISSING
+require_marker scripts/test-cleanup-exact-trivy-cache 'root-owned-empty-fanal' ECR_SYNC_TRIVY_ROOT_OWNED_FIXTURE_MISSING
+require_marker scripts/test-cleanup-exact-trivy-cache 'unexpected-child' ECR_SYNC_TRIVY_UNEXPECTED_CHILD_FIXTURE_MISSING
+require_marker scripts/test-cleanup-exact-trivy-cache '# symlink:' ECR_SYNC_TRIVY_SYMLINK_FIXTURE_MISSING
+require_marker scripts/test-cleanup-exact-trivy-cache 'wrong-owner' ECR_SYNC_TRIVY_WRONG_OWNER_FIXTURE_MISSING
+require_marker scripts/test-cleanup-exact-trivy-cache 'root-identity' ECR_SYNC_TRIVY_ROOT_IDENTITY_FIXTURE_MISSING
 reject_marker .github/workflows/supply-chain.yml 'sudo chown -R' ECR_SYNC_TRIVY_BROAD_OWNERSHIP_REPAIR_PRESENT
+reject_marker .github/workflows/supply-chain.yml 'sudo chmod -R' ECR_SYNC_TRIVY_BROAD_MODE_REPAIR_PRESENT
+reject_marker scripts/cleanup-exact-trivy-cache 'sudo chown -R' ECR_SYNC_TRIVY_CLEANER_BROAD_OWNERSHIP_REPAIR_PRESENT
+reject_marker scripts/cleanup-exact-trivy-cache 'sudo chmod -R' ECR_SYNC_TRIVY_CLEANER_BROAD_MODE_REPAIR_PRESENT
+reject_marker scripts/cleanup-exact-trivy-cache 'sudo rm' ECR_SYNC_TRIVY_CLEANER_PRIVILEGED_REMOVAL_PRESENT
+reject_marker scripts/cleanup-exact-trivy-cache 'rm -rf' ECR_SYNC_TRIVY_CLEANER_RECURSIVE_REMOVAL_PRESENT
+reject_marker .github/workflows/supply-chain.yml 'sudo find -L' ECR_SYNC_TRIVY_ENUMERATION_FOLLOWS_SYMLINKS
+reject_marker scripts/cleanup-exact-trivy-cache 'sudo find -L' ECR_SYNC_TRIVY_CLEANER_ENUMERATION_FOLLOWS_SYMLINKS
+workflow_trivy_sudo_find_count=$(awk '
+  index($0, "sudo find -P \"$trivy_cache\"") { count++ }
+  END { print count + 0 }
+' .github/workflows/supply-chain.yml)
+cleaner_trivy_sudo_find_count=$(awk '
+  index($0, "sudo find -P \"$root\"") { count++ }
+  END { print count + 0 }
+' scripts/cleanup-exact-trivy-cache)
+if [ "$workflow_trivy_sudo_find_count" -ne 2 ] || \
+    [ "$cleaner_trivy_sudo_find_count" -ne 1 ]; then
+  printf 'ECR_SYNC_TRIVY_SUDO_ENUMERATION_COUNT_INVALID workflow=%s cleaner=%s\n' \
+    "$workflow_trivy_sudo_find_count" "$cleaner_trivy_sudo_find_count" >&2
+  failure_count=$((failure_count + 1))
+fi
 require_marker .github/workflows/supply-chain.yml "stat -c '%u:%g' bin/ecr-credential-sync" ECR_SYNC_OUTPUT_OWNERSHIP_GATE_MISSING
 require_marker .github/workflows/supply-chain.yml "vex_expires='2026-09-15T00:00:00Z'" ECR_SYNC_DAPPER_VEX_EXPIRY_MISSING
 require_marker .github/workflows/supply-chain.yml 'evidence/dapper.openvex.json' ECR_SYNC_DAPPER_VEX_EVIDENCE_MISSING

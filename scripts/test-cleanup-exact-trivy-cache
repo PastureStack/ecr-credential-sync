@@ -1,0 +1,140 @@
+#!/bin/bash
+set -euo pipefail
+
+repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+cleaner="$repo_root/scripts/cleanup-exact-trivy-cache"
+fixture_parent=$(mktemp -d)
+case "$fixture_parent" in
+  /tmp/*|/var/tmp/*) ;;
+  *) exit 1 ;;
+esac
+export RUNNER_TEMP="$fixture_parent"
+root="${RUNNER_TEMP}/trivy-cache"
+caller_uid=$(id -u)
+caller_gid=$(id -g)
+
+cleanup_fixture_layout() {
+  if [ -L "$root" ]; then
+    rm -f -- "$root"
+    return
+  fi
+  if [ ! -e "$root" ]; then
+    return
+  fi
+  test -d "$root"
+  test ! -L "$root"
+  test "$(stat -Lc '%u:%g' -- "$root")" = \
+    "${caller_uid}:${caller_gid}"
+  for path in \
+    "$root/db/metadata.json" \
+    "$root/db/trivy.db" \
+    "$root/fanal" \
+    "$root/db"; do
+    if [ -e "$path" ] || [ -L "$path" ]; then
+      if [ ! -L "$path" ]; then
+        sudo chown -- "${caller_uid}:${caller_gid}" "$path"
+      fi
+    fi
+  done
+  if [ -e "$root/fanal/unexpected" ] || [ -L "$root/fanal/unexpected" ]; then
+    rm -f -- "$root/fanal/unexpected"
+  fi
+  rm -f -- "$root/db/metadata.json" "$root/db/trivy.db"
+  if [ -L "$root/fanal" ]; then
+    rm -f -- "$root/fanal"
+  elif [ -d "$root/fanal" ]; then
+    rmdir -- "$root/fanal"
+  fi
+  rmdir -- "$root/db"
+  rmdir -- "$root"
+}
+
+cleanup_fixture_parent() {
+  cleanup_fixture_layout
+  if [ -d "$fixture_parent/symlink-target" ]; then
+    rmdir -- "$fixture_parent/symlink-target"
+  fi
+  rmdir -- "$fixture_parent"
+}
+trap cleanup_fixture_parent EXIT
+
+create_layout() {
+  local fanal_kind=${1:-directory}
+
+  test ! -e "$root"
+  test ! -L "$root"
+  mkdir -m 0700 -- "$root"
+  mkdir -m 0755 -- "$root/db"
+  printf '{}\n' > "$root/db/metadata.json"
+  printf 'fixture-database\n' > "$root/db/trivy.db"
+  chmod 0644 -- "$root/db/metadata.json" "$root/db/trivy.db"
+  case "$fanal_kind" in
+    directory)
+      mkdir -m 0700 -- "$root/fanal"
+      ;;
+    symlink)
+      mkdir -m 0700 -- "$fixture_parent/symlink-target"
+      ln -s -- "$fixture_parent/symlink-target" "$root/fanal"
+      ;;
+    *) exit 1 ;;
+  esac
+  sudo chown -- 0:0 "$root/db/metadata.json"
+  sudo chown -- 0:0 "$root/db/trivy.db"
+  sudo chown -- 0:0 "$root/db"
+  if [ "$fanal_kind" = directory ]; then
+    sudo chown -- 0:0 "$root/fanal"
+  fi
+}
+
+expect_failure() {
+  local name=$1
+  local identity=$2
+  local stdout="${fixture_parent}/${name}.stdout"
+  local stderr="${fixture_parent}/${name}.stderr"
+
+  if bash "$cleaner" "$root" "$identity" >"$stdout" 2>"$stderr"; then
+    printf 'expected Trivy cleanup fixture to fail: %s\n' "$name" >&2
+    exit 1
+  fi
+  test ! -s "$stdout"
+  test -d "$root"
+  rm -f -- "$stdout" "$stderr"
+}
+
+# root-owned-empty-fanal: the exact production layout is enumerable and removed.
+create_layout
+root_identity=$(stat -Lc '%d:%i:%u:%g:%a' -- "$root")
+bash "$cleaner" "$root" "$root_identity" >/dev/null
+test ! -e "$root"
+test ! -L "$root"
+
+# unexpected-child: no cache entry outside the four-path allowlist is accepted.
+create_layout
+sudo chown -- "${caller_uid}:${caller_gid}" "$root/fanal"
+printf 'unexpected\n' > "$root/fanal/unexpected"
+sudo chown -- 0:0 "$root/fanal"
+root_identity=$(stat -Lc '%d:%i:%u:%g:%a' -- "$root")
+expect_failure unexpected-child "$root_identity"
+cleanup_fixture_layout
+
+# symlink: find never follows it and the exact type check rejects it.
+create_layout symlink
+root_identity=$(stat -Lc '%d:%i:%u:%g:%a' -- "$root")
+expect_failure symlink "$root_identity"
+cleanup_fixture_layout
+rmdir -- "$fixture_parent/symlink-target"
+
+# wrong-owner: children may only remain root-owned or caller-owned.
+create_layout
+sudo chown -- 65534:65534 "$root/db/trivy.db"
+root_identity=$(stat -Lc '%d:%i:%u:%g:%a' -- "$root")
+expect_failure wrong-owner "$root_identity"
+cleanup_fixture_layout
+
+# root-identity: a stale or substituted root is rejected before enumeration.
+create_layout
+root_identity=$(stat -Lc '%d:%i:%u:%g:%a' -- "$root")
+expect_failure root-identity "${root_identity}:stale"
+cleanup_fixture_layout
+
+printf 'ECR_SYNC_TRIVY_CACHE_CLEANUP_FIXTURES_OK positive=1 negative=4 sudo_find=exact-no-follow\n'

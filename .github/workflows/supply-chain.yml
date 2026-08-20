@@ -181,6 +181,7 @@ jobs:
             scripts/build-runtime-image \
             scripts/check-buildx-module-versions \
             scripts/check-go-telemetry-state \
+            scripts/cleanup-exact-trivy-cache \
             scripts/ci \
             scripts/entry \
             scripts/install-locked-host-buildx \
@@ -193,6 +194,7 @@ jobs:
             scripts/test \
             scripts/test-buildx-buildkit-version \
             scripts/test-buildx-module-versions \
+            scripts/test-cleanup-exact-trivy-cache \
             scripts/test-dapper-image-identity \
             scripts/test-go-telemetry-state \
             scripts/test-install-locked-host-buildx \
@@ -823,10 +825,24 @@ jobs:
               | select(.purl == "pkg:golang/golang.org/x/mod@v0.38.0")
             ] | length) == 0
           ' evidence/dapper.cdx.json >/dev/null
-          mapfile -t trivy_cache_entries < <(
-            cd "$trivy_cache"
-            find . -mindepth 1 -printf '%y\t%P\n' | LC_ALL=C sort
-          )
+          canonical_runner_temp="$(realpath -e -- "$RUNNER_TEMP")"
+          test "$trivy_cache" = "${canonical_runner_temp}/trivy-cache"
+          test -d "$trivy_cache"
+          test ! -L "$trivy_cache"
+          test -O "$trivy_cache"
+          test "$(realpath -e -- "$trivy_cache")" = "$trivy_cache"
+          test "$(stat -Lc '%u:%g:%a' -- "$trivy_cache")" = \
+            "$(id -u):$(id -g):700"
+          test "$(stat -Lc '%d:%i:%u:%g:%a' -- "$trivy_cache")" = \
+            "$trivy_cache_identity"
+          trivy_cache_entries_output="$(
+            sudo find -P "$trivy_cache" -xdev -mindepth 1 \
+              -printf '%y\t%P\n' |
+              LC_ALL=C sort
+          )"
+          printf '%s\n' "$trivy_cache_entries_output" \
+            > evidence/trivy-cache-entries.tsv
+          mapfile -t trivy_cache_entries <<<"$trivy_cache_entries_output"
           expected_trivy_cache_entries=(
             $'d\tdb'
             $'d\tfanal'
@@ -837,11 +853,12 @@ jobs:
           for index in "${!expected_trivy_cache_entries[@]}"; do
             test "${trivy_cache_entries[$index]}" = "${expected_trivy_cache_entries[$index]}"
           done
-          (
-            cd "$trivy_cache"
-            find . -mindepth 0 -maxdepth 2 \
+          trivy_cache_ownership_output="$(
+            sudo find -P "$trivy_cache" -xdev -mindepth 0 -maxdepth 2 \
               -printf '%y\t%P\t%U:%G\t%m\t%s\n' | LC_ALL=C sort
-          ) > evidence/trivy-cache-ownership.tsv
+          )"
+          printf '%s\n' "$trivy_cache_ownership_output" \
+            > evidence/trivy-cache-ownership.tsv
 
       - name: Enforce source, builder, and runtime security policy
         shell: bash
@@ -1051,91 +1068,8 @@ jobs:
             test ! -L "$root"
           }
 
-          cleanup_exact_trivy_cache() {
-            local root="$1"
-            local expected_identity="$2"
-            local canonical_runner_temp expected_root current_identity
-            local caller_uid caller_gid path owner
-            local -a exact_files exact_directories
-
-            test -n "$root" || return 0
-            test -n "$expected_identity"
-            canonical_runner_temp="$(realpath -e -- "$RUNNER_TEMP")"
-            expected_root="${canonical_runner_temp}/trivy-cache"
-            test "$root" = "$expected_root"
-            if [ ! -e "$root" ] && [ ! -L "$root" ]; then
-              return 0
-            fi
-            test -d "$root"
-            test ! -L "$root"
-            test -O "$root"
-            test "$(realpath -e -- "$root")" = "$root"
-            test "$(stat -Lc '%a' -- "$root")" = 700
-            current_identity="$(stat -Lc '%d:%i:%u:%g:%a' -- "$root")"
-            test "$current_identity" = "$expected_identity"
-            caller_uid="$(id -u)"
-            caller_gid="$(id -g)"
-            exact_files=(
-              "${root}/db/metadata.json"
-              "${root}/db/trivy.db"
-            )
-            exact_directories=(
-              "${root}/fanal"
-              "${root}/db"
-            )
-            while IFS= read -r path; do
-              case "$path" in
-                db|db/metadata.json|db/trivy.db|fanal) ;;
-                *) return 1 ;;
-              esac
-            done < <(find "$root" -mindepth 1 -printf '%P\n' | LC_ALL=C sort)
-            for path in "${exact_files[@]}"; do
-              if [ -e "$path" ] || [ -L "$path" ]; then
-                test -f "$path"
-                test ! -L "$path"
-                owner="$(stat -Lc '%u:%g' -- "$path")"
-                case "$owner" in
-                  "0:0"|"${caller_uid}:${caller_gid}") ;;
-                  *) return 1 ;;
-                esac
-              fi
-            done
-            for path in "${exact_directories[@]}"; do
-              if [ -e "$path" ] || [ -L "$path" ]; then
-                test -d "$path"
-                test ! -L "$path"
-                owner="$(stat -Lc '%u:%g' -- "$path")"
-                case "$owner" in
-                  "0:0"|"${caller_uid}:${caller_gid}") ;;
-                  *) return 1 ;;
-                esac
-              fi
-            done
-            for path in "${exact_files[@]}" "${exact_directories[@]}"; do
-              if [ -e "$path" ] || [ -L "$path" ]; then
-                owner="$(stat -Lc '%u:%g' -- "$path")"
-                if [ "$owner" = "0:0" ]; then
-                  sudo chown -- "${caller_uid}:${caller_gid}" "$path"
-                fi
-                test "$(stat -Lc '%u:%g' -- "$path")" = \
-                  "${caller_uid}:${caller_gid}"
-              fi
-            done
-            for path in "${exact_files[@]}"; do
-              rm -f -- "$path"
-            done
-            for path in "${exact_directories[@]}"; do
-              if [ -e "$path" ] || [ -L "$path" ]; then
-                rmdir -- "$path"
-              fi
-            done
-            rmdir -- "$root"
-            test ! -e "$root"
-            test ! -L "$root"
-          }
-
           run_identity="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${GITHUB_JOB}"
-          cleanup_exact_trivy_cache \
+          bash scripts/cleanup-exact-trivy-cache \
             "${ECR_SYNC_TRIVY_CACHE_ROOT:-}" \
             "${ECR_SYNC_TRIVY_CACHE_ROOT_IDENTITY:-}"
           cleanup_exact_home_root \

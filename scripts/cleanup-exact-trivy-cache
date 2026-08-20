@@ -1,0 +1,82 @@
+#!/bin/bash
+set -euo pipefail
+
+root=${1:-}
+expected_identity=${2:-}
+
+if [ -z "$root" ]; then
+  exit 0
+fi
+test -n "$expected_identity"
+
+canonical_runner_temp=$(realpath -e -- "$RUNNER_TEMP")
+expected_root="${canonical_runner_temp}/trivy-cache"
+test "$root" = "$expected_root"
+if [ ! -e "$root" ] && [ ! -L "$root" ]; then
+  exit 0
+fi
+
+test -d "$root"
+test ! -L "$root"
+test -O "$root"
+test "$(realpath -e -- "$root")" = "$root"
+test "$(stat -Lc '%a' -- "$root")" = 700
+current_identity=$(stat -Lc '%d:%i:%u:%g:%a' -- "$root")
+test "$current_identity" = "$expected_identity"
+
+caller_uid=$(id -u)
+caller_gid=$(id -g)
+exact_files=(
+  "${root}/db/metadata.json"
+  "${root}/db/trivy.db"
+)
+exact_directories=(
+  "${root}/fanal"
+  "${root}/db"
+)
+expected_inventory=$'db\ndb/metadata.json\ndb/trivy.db\nfanal'
+actual_inventory=$(
+  sudo find -P "$root" -xdev -mindepth 1 -printf '%P\n' |
+    LC_ALL=C sort
+)
+test "$actual_inventory" = "$expected_inventory"
+
+for path in "${exact_files[@]}"; do
+  test -f "$path"
+  test ! -L "$path"
+  owner=$(stat -Lc '%u:%g' -- "$path")
+  case "$owner" in
+    "0:0"|"${caller_uid}:${caller_gid}") ;;
+    *) exit 1 ;;
+  esac
+done
+for path in "${exact_directories[@]}"; do
+  test -d "$path"
+  test ! -L "$path"
+  owner=$(stat -Lc '%u:%g' -- "$path")
+  case "$owner" in
+    "0:0"|"${caller_uid}:${caller_gid}") ;;
+    *) exit 1 ;;
+  esac
+done
+
+for path in "${exact_files[@]}" "${exact_directories[@]}"; do
+  owner=$(stat -Lc '%u:%g' -- "$path")
+  if [ "$owner" = "0:0" ]; then
+    sudo chown -- "${caller_uid}:${caller_gid}" "$path"
+  fi
+  test "$(stat -Lc '%u:%g' -- "$path")" = \
+    "${caller_uid}:${caller_gid}"
+done
+
+for path in "${exact_files[@]}"; do
+  rm -f -- "$path"
+done
+for path in "${exact_directories[@]}"; do
+  rmdir -- "$path"
+done
+rmdir -- "$root"
+test ! -e "$root"
+test ! -L "$root"
+
+printf 'ECR_SYNC_TRIVY_CACHE_CLEANUP_OK inventory=exact owner=root-or-caller\n'
