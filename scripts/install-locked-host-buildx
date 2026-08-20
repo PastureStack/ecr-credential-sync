@@ -6,8 +6,9 @@ if [ "$#" -ne 1 ]; then
   exit 64
 fi
 
-repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
 lock_file="${repo_root}/toolchain/host-build-toolchain.lock"
+module_checker="${repo_root}/scripts/check-buildx-module-versions"
 destination_root=$1
 digest_pattern='^[0-9a-f]{64}$'
 
@@ -17,36 +18,70 @@ fail() {
 }
 
 [ -f "$lock_file" ] || fail missing-host-build-toolchain-lock
+[ -f "$module_checker" ] && [ ! -L "$module_checker" ] || fail missing-module-checker
 # shellcheck disable=SC1090
 source "$lock_file"
 
 required_lock_keys=(
   HOST_BUILDX_VERSION
   HOST_BUILDX_COMMIT
-  HOST_BUILDX_ASSET_PLATFORM
-  HOST_BUILDX_ASSET_FILENAME
-  HOST_BUILDX_ASSET_URL
-  HOST_BUILDX_ASSET_SHA256
-  HOST_BUILDX_CHECKSUMS_FILENAME
-  HOST_BUILDX_CHECKSUMS_URL
-  HOST_BUILDX_CHECKSUMS_SHA256
+  HOST_BUILDX_SOURCE_DATE_EPOCH
+  HOST_BUILDX_SOURCE_FILENAME
+  HOST_BUILDX_SOURCE_URL
+  HOST_BUILDX_SOURCE_SHA256
+  HOST_BUILDX_SECURITY_PATCH_PATH
+  HOST_BUILDX_SECURITY_PATCH_SHA256
+  HOST_BUILDX_GO_VERSION
+  HOST_BUILDX_GO_PLATFORM
+  HOST_BUILDX_GO_FILENAME
+  HOST_BUILDX_GO_URL
+  HOST_BUILDX_GO_SHA256
+  HOST_BUILDX_GO_ARCHIVE_VERSION
+  HOST_BUILDX_X_MOD_VERSION
+  HOST_BUILDX_BINARY_SHA256
+  HOST_BUILDX_INSTALL_METHOD
 )
 for lock_key in "${required_lock_keys[@]}"; do
   [ -n "${!lock_key-}" ] || fail "missing-lock-key:${lock_key}"
 done
 
-[ "$HOST_BUILDX_ASSET_PLATFORM" = linux-amd64 ] || fail unsupported-platform
-[ "$HOST_BUILDX_ASSET_FILENAME" = "buildx-${HOST_BUILDX_VERSION}.linux-amd64" ] || \
-  fail asset-filename-version-mismatch
-[ "$HOST_BUILDX_CHECKSUMS_FILENAME" = checksums.txt ] || fail checksums-filename-mismatch
-expected_asset_url="https://github.com/docker/buildx/releases/download/${HOST_BUILDX_VERSION}/${HOST_BUILDX_ASSET_FILENAME}"
-expected_checksums_url="https://github.com/docker/buildx/releases/download/${HOST_BUILDX_VERSION}/${HOST_BUILDX_CHECKSUMS_FILENAME}"
-[ "$HOST_BUILDX_ASSET_URL" = "$expected_asset_url" ] || fail asset-url-not-exact
-[ "$HOST_BUILDX_CHECKSUMS_URL" = "$expected_checksums_url" ] || fail checksums-url-not-exact
-[[ "$HOST_BUILDX_ASSET_SHA256" =~ $digest_pattern ]] || fail malformed-asset-sha256
-[[ "$HOST_BUILDX_CHECKSUMS_SHA256" =~ $digest_pattern ]] || fail malformed-checksums-sha256
+[ "$HOST_BUILDX_VERSION" = v0.36.1 ] || fail unsupported-buildx-version
+[[ "$HOST_BUILDX_COMMIT" =~ ^[0-9a-f]{40}$ ]] || fail malformed-buildx-commit
+[[ "$HOST_BUILDX_SOURCE_DATE_EPOCH" =~ ^[0-9]+$ ]] || fail malformed-source-date-epoch
+[ "$HOST_BUILDX_SOURCE_FILENAME" = "buildx-${HOST_BUILDX_COMMIT}.tar.gz" ] || \
+  fail source-filename-commit-mismatch
+expected_source_url="https://codeload.github.com/docker/buildx/tar.gz/${HOST_BUILDX_COMMIT}"
+[ "$HOST_BUILDX_SOURCE_URL" = "$expected_source_url" ] || fail source-url-not-exact
+[ "$HOST_BUILDX_SECURITY_PATCH_PATH" = toolchain/buildx-security.patch ] || \
+  fail security-patch-path-not-exact
+[ "$HOST_BUILDX_GO_PLATFORM" = linux-amd64 ] || fail unsupported-go-platform
+[ "$HOST_BUILDX_GO_FILENAME" = "go${HOST_BUILDX_GO_VERSION}.linux-amd64.tar.gz" ] || \
+  fail go-filename-version-mismatch
+expected_go_url="https://go.dev/dl/${HOST_BUILDX_GO_FILENAME}"
+[ "$HOST_BUILDX_GO_URL" = "$expected_go_url" ] || fail go-url-not-exact
+[ "$HOST_BUILDX_INSTALL_METHOD" = repository-locked-offline-source-builder ] || \
+  fail install-method-mismatch
+[[ "$HOST_BUILDX_GO_ARCHIVE_VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || \
+  fail malformed-go-archive-version
+[[ "$HOST_BUILDX_X_MOD_VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || \
+  fail malformed-x-mod-version
+for digest_name in \
+    HOST_BUILDX_SOURCE_SHA256 \
+    HOST_BUILDX_SECURITY_PATCH_SHA256 \
+    HOST_BUILDX_GO_SHA256 \
+    HOST_BUILDX_BINARY_SHA256; do
+  [[ "${!digest_name}" =~ $digest_pattern ]] || fail "malformed-digest:${digest_name}"
+done
 
-for required_command in awk chmod curl find grep id mkdir mktemp mv realpath rm rmdir sha256sum stat wc; do
+patch_source=$(realpath -e -- "${repo_root}/${HOST_BUILDX_SECURITY_PATCH_PATH}") || \
+  fail security-patch-realpath-failed
+[ "$patch_source" = "${repo_root}/toolchain/buildx-security.patch" ] || \
+  fail security-patch-outside-authority
+[ -f "$patch_source" ] && [ ! -L "$patch_source" ] || fail security-patch-not-regular-file
+
+for required_command in \
+    awk bash chmod cmp cp curl dirname find git grep head id mkdir mv realpath rm rmdir \
+    sha256sum sort stat tar touch wc; do
   command -v "$required_command" >/dev/null || fail "missing-command:${required_command}"
 done
 
@@ -114,24 +149,94 @@ assert_destination_root_identity() {
   destination_root_identity_matches || fail destination-root-identity-changed
 }
 
-assert_destination_root_identity
-asset_download=$(mktemp "${canonical_root}/.buildx-asset.XXXXXX")
-checksums_download=$(mktemp "${canonical_root}/.buildx-checksums.XXXXXX")
+go_archive="${canonical_root}/.go-toolchain.tar.gz"
+source_archive="${canonical_root}/.buildx-source.tar.gz"
+patch_copy="${canonical_root}/.buildx-security.patch"
+go_root="${canonical_root}/.go-toolchain"
+home_root="${canonical_root}/.home"
+go_config_root="${canonical_root}/.go-config"
+source_one="${canonical_root}/.buildx-source-1"
+source_two="${canonical_root}/.buildx-source-2"
+cache_one="${canonical_root}/.go-build-cache-1"
+cache_two="${canonical_root}/.go-build-cache-2"
+deps_one="${canonical_root}/.buildx-deps-1.txt"
+deps_two="${canonical_root}/.buildx-deps-2.txt"
+binary_one="${canonical_root}/.docker-buildx-1"
+binary_two="${canonical_root}/.docker-buildx-2"
+module_raw_one="${canonical_root}/.buildx-go-version-1.raw"
+module_raw_two="${canonical_root}/.buildx-go-version-2.raw"
+module_canonical_two="${canonical_root}/.buildx-go-version-2.txt"
+module_manifest="${canonical_root}/buildx-go-version.txt"
+build_manifest="${canonical_root}/buildx-build.tsv"
 bin_dir="${canonical_root}/bin"
 target="${bin_dir}/docker-buildx"
 completed=0
 
+for output_path in \
+    "$go_archive" "$source_archive" "$patch_copy" "$go_root" "$home_root" \
+    "$go_config_root" "$source_one" "$source_two" "$cache_one" "$cache_two" \
+    "$deps_one" "$deps_two" "$binary_one" "$binary_two" "$module_raw_one" \
+    "$module_raw_two" "$module_canonical_two" "$module_manifest" "$build_manifest" \
+    "$bin_dir" "$target"; do
+  [ ! -e "$output_path" ] && [ ! -L "$output_path" ] || fail work-output-already-exists
+done
+
+remove_exact_file() {
+  local path=$1
+  [ "$(dirname -- "$path")" = "$canonical_root" ] || return 1
+  [ ! -e "$path" ] && [ ! -L "$path" ] && return 0
+  [ ! -d "$path" ] || return 1
+  rm -f -- "$path"
+}
+
+remove_exact_directory() {
+  local path=$1
+  local observed_root
+  [ "$(dirname -- "$path")" = "$canonical_root" ] || return 1
+  [ ! -e "$path" ] && [ ! -L "$path" ] && return 0
+  [ -d "$path" ] && [ ! -L "$path" ] && [ -O "$path" ] || return 1
+  observed_root=$(realpath -e -- "$path") || return 1
+  [ "$observed_root" = "$path" ] || return 1
+  rm -rf -- "$path"
+  [ ! -e "$path" ] && [ ! -L "$path" ]
+}
+
+cleanup_working_files() {
+  local cleanup_status=0
+  destination_root_identity_matches || return 1
+  for file_path in \
+      "$go_archive" "$source_archive" "$patch_copy" "$deps_one" "$deps_two" \
+      "$binary_one" "$binary_two" "$module_raw_one" "$module_raw_two" \
+      "$module_canonical_two"; do
+    remove_exact_file "$file_path" || cleanup_status=1
+  done
+  for directory_path in \
+      "$go_root" "$home_root" "$go_config_root" "$source_one" "$source_two" \
+      "$cache_one" "$cache_two"; do
+    remove_exact_directory "$directory_path" || cleanup_status=1
+  done
+  return "$cleanup_status"
+}
+
 cleanup() {
-  if ! destination_root_identity_matches; then
+  local original_exit=$?
+  local cleanup_exit=0
+  trap - EXIT
+  set +e
+  if destination_root_identity_matches; then
+    cleanup_working_files || cleanup_exit=1
+    if [ "$completed" -ne 1 ]; then
+      rm -f -- "$target" "$module_manifest" "$build_manifest" || cleanup_exit=1
+      rmdir -- "$bin_dir" >/dev/null 2>&1 || :
+    fi
+  else
     printf 'ECR_SYNC_LOCKED_HOST_BUILDX_CLEANUP_SKIPPED reason=destination-root-identity-changed\n' >&2
-    return
+    cleanup_exit=1
   fi
-  [ -z "$asset_download" ] || rm -f -- "$asset_download"
-  [ -z "$checksums_download" ] || rm -f -- "$checksums_download"
-  if [ "$completed" -ne 1 ]; then
-    rm -f -- "$target"
-    rmdir -- "$bin_dir" >/dev/null 2>&1 || :
+  if [ "$original_exit" -eq 0 ] && [ "$cleanup_exit" -ne 0 ]; then
+    original_exit=1
   fi
+  exit "$original_exit"
 }
 trap cleanup EXIT
 
@@ -143,49 +248,197 @@ download_https() {
     --output "$output" "$url"
 }
 
-download_https "$HOST_BUILDX_CHECKSUMS_URL" "$checksums_download" || fail checksums-download-failed
-actual_checksums_sha=$(sha256sum -- "$checksums_download")
-actual_checksums_sha=${actual_checksums_sha%% *}
-[ "$actual_checksums_sha" = "$HOST_BUILDX_CHECKSUMS_SHA256" ] || fail checksums-sha256-mismatch
-
-mapfile -t official_asset_hashes < <(
-  awk -v filename="*${HOST_BUILDX_ASSET_FILENAME}" '$2 == filename {print $1}' \
-    "$checksums_download"
-)
-[ "${#official_asset_hashes[@]}" -eq 1 ] || fail official-asset-checksum-count-invalid
-[[ "${official_asset_hashes[0]}" =~ $digest_pattern ]] || fail official-asset-checksum-malformed
-[ "${official_asset_hashes[0]}" = "$HOST_BUILDX_ASSET_SHA256" ] || \
-  fail official-and-locked-asset-sha256-mismatch
-
-download_https "$HOST_BUILDX_ASSET_URL" "$asset_download" || fail asset-download-failed
-actual_asset_sha=$(sha256sum -- "$asset_download")
-actual_asset_sha=${actual_asset_sha%% *}
-[ "$actual_asset_sha" = "$HOST_BUILDX_ASSET_SHA256" ] || fail asset-sha256-mismatch
-
+umask 077
 assert_destination_root_identity
-chmod 0500 "$asset_download"
-assert_destination_root_identity
-version_output=$("$asset_download" version) || fail version-readback-failed
-[ "$(printf '%s\n' "$version_output" | wc -l)" -eq 1 ] || fail version-readback-line-count-invalid
+download_https "$HOST_BUILDX_GO_URL" "$go_archive" || fail go-download-failed
+download_https "$HOST_BUILDX_SOURCE_URL" "$source_archive" || fail source-download-failed
+cp -- "$patch_source" "$patch_copy"
+chmod 0400 "$go_archive" "$source_archive" "$patch_copy"
+
+actual_go_sha=$(sha256sum -- "$go_archive")
+actual_go_sha=${actual_go_sha%% *}
+[ "$actual_go_sha" = "$HOST_BUILDX_GO_SHA256" ] || fail go-sha256-mismatch
+actual_source_sha=$(sha256sum -- "$source_archive")
+actual_source_sha=${actual_source_sha%% *}
+[ "$actual_source_sha" = "$HOST_BUILDX_SOURCE_SHA256" ] || fail source-sha256-mismatch
+actual_patch_sha=$(sha256sum -- "$patch_copy")
+actual_patch_sha=${actual_patch_sha%% *}
+[ "$actual_patch_sha" = "$HOST_BUILDX_SECURITY_PATCH_SHA256" ] || \
+  fail security-patch-sha256-mismatch
+
+for directory_path in \
+    "$go_root" "$home_root" "$go_config_root" "$source_one" "$source_two" \
+    "$cache_one" "$cache_two"; do
+  mkdir -m 0700 -- "$directory_path"
+done
+
+tar --extract --gzip --file="$go_archive" --directory="$go_root" \
+  --strip-components=1 --no-same-owner --no-same-permissions || fail go-extract-failed
+if find "$go_root" -type l -print -quit | grep -q .; then
+  fail go-archive-symlink-present
+fi
+go_bin="${go_root}/bin/go"
+gofmt_bin="${go_root}/bin/gofmt"
+[ -f "$go_bin" ] && [ ! -L "$go_bin" ] || fail go-binary-not-regular-file
+[ -f "$gofmt_bin" ] && [ ! -L "$gofmt_bin" ] || fail gofmt-binary-not-regular-file
+chmod 0500 "$go_bin" "$gofmt_bin"
+export HOME="$home_root"
+export XDG_CONFIG_HOME="$go_config_root"
+export GOTOOLCHAIN=local
+export GO111MODULE=on
+export GOPROXY=off
+export GOSUMDB=sum.golang.org
+"$go_bin" telemetry off >/dev/null || fail go-telemetry-disable-failed
+expected_compiler="go${HOST_BUILDX_GO_VERSION}"
+[ "$("$go_bin" version)" = "go version ${expected_compiler} linux/amd64" ] || \
+  fail go-version-readback-mismatch
+
+prepare_and_build() {
+  local source_root=$1
+  local cache_root=$2
+  local deps_output=$3
+  local binary_output=$4
+
+  tar --extract --gzip --file="$source_archive" --directory="$source_root" \
+    --strip-components=1 --no-same-owner --no-same-permissions || fail source-extract-failed
+  if find "$source_root" -type l -print -quit | grep -q .; then
+    fail source-archive-symlink-present
+  fi
+  [ "$(grep -Fxc $'\tgithub.com/moby/go-archive v0.2.1' "$source_root/go.mod")" -eq 1 ] || \
+    fail baseline-go-archive-version-mismatch
+  [ "$(grep -Fxc $'\tgolang.org/x/mod v0.38.0' "$source_root/go.mod")" -eq 1 ] || \
+    fail baseline-x-mod-version-mismatch
+  (
+    cd "$source_root"
+    git apply --check "$patch_copy"
+    git apply "$patch_copy"
+    git apply --reverse --check "$patch_copy"
+  ) || fail security-patch-apply-failed
+  mapfile -t patched_go_files < <(
+    (
+      cd "$source_root"
+      git apply --numstat "$patch_copy"
+    ) | awk -F '\t' '$3 ~ /\.go$/ && $1 != "-" { print $3 }'
+  )
+  [ "${#patched_go_files[@]}" -gt 0 ] || fail patched-go-file-list-empty
+  for patched_go_file in "${patched_go_files[@]}"; do
+    case "$patched_go_file" in
+      /*|../*|*/../*|*/..) fail patched-go-path-outside-source ;;
+    esac
+    patched_go_path="${source_root}/${patched_go_file}"
+    if [ -e "$patched_go_path" ] || [ -L "$patched_go_path" ]; then
+      [ -f "$patched_go_path" ] && [ ! -L "$patched_go_path" ] || \
+        fail patched-go-path-not-regular-file
+      [ -z "$("$gofmt_bin" -d -- "$patched_go_path")" ] || \
+        fail patched-go-source-not-gofmt
+    fi
+  done
+  [ "$(grep -Fxc $'\tgithub.com/moby/go-archive '"$HOST_BUILDX_GO_ARCHIVE_VERSION" "$source_root/go.mod")" -eq 1 ] || \
+    fail patched-go-archive-version-mismatch
+  [ "$(grep -Fxc $'\tgolang.org/x/mod '"$HOST_BUILDX_X_MOD_VERSION" "$source_root/go.mod")" -eq 1 ] || \
+    fail patched-x-mod-version-mismatch
+  grep -Fqx "# github.com/moby/go-archive ${HOST_BUILDX_GO_ARCHIVE_VERSION}" \
+    "$source_root/vendor/modules.txt" || fail vendored-go-archive-version-mismatch
+  grep -Fqx "# golang.org/x/mod ${HOST_BUILDX_X_MOD_VERSION}" \
+    "$source_root/vendor/modules.txt" || fail vendored-x-mod-version-mismatch
+  if grep -F 'github.com/moby/go-archive v0.2.1' \
+      "$source_root/go.mod" "$source_root/vendor/modules.txt" >/dev/null; then
+    fail vulnerable-go-archive-version-present
+  fi
+  if grep -F 'golang.org/x/mod v0.38.0' \
+      "$source_root/go.mod" "$source_root/vendor/modules.txt" >/dev/null; then
+    fail vulnerable-x-mod-version-present
+  fi
+  if grep -F 'github.com/docker/docker ' \
+      "$source_root/go.mod" "$source_root/vendor/modules.txt" >/dev/null; then
+    fail legacy-docker-module-present
+  fi
+  (
+    cd "$source_root"
+    GOCACHE="$cache_root" "$go_bin" list -mod=vendor -buildvcs=false -deps \
+      ./cmd/buildx | LC_ALL=C sort -u > "$deps_output"
+  ) || fail offline-dependency-list-failed
+  if grep -q '^github.com/docker/docker/' "$deps_output"; then
+    fail legacy-docker-package-reachable
+  fi
+  (
+    cd "$source_root"
+    SOURCE_DATE_EPOCH="$HOST_BUILDX_SOURCE_DATE_EPOCH" \
+      CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GOCACHE="$cache_root" \
+      "$go_bin" build -mod=vendor -trimpath -buildvcs=false \
+        -ldflags "-s -w -buildid= -X github.com/docker/buildx/version.Version=${HOST_BUILDX_VERSION} -X github.com/docker/buildx/version.Revision=${HOST_BUILDX_COMMIT} -X github.com/docker/buildx/version.Package=github.com/docker/buildx" \
+        -o "$binary_output" ./cmd/buildx
+  ) || fail offline-build-failed
+  chmod 0500 "$binary_output"
+}
+
+prepare_and_build "$source_one" "$cache_one" "$deps_one" "$binary_one"
+prepare_and_build "$source_two" "$cache_two" "$deps_two" "$binary_two"
+cmp -s "$deps_one" "$deps_two" || fail dependency-lists-not-reproducible
+cmp -s "$binary_one" "$binary_two" || fail binaries-not-reproducible
+
+actual_binary_sha=$(sha256sum -- "$binary_one")
+actual_binary_sha=${actual_binary_sha%% *}
+[ "$actual_binary_sha" = "$HOST_BUILDX_BINARY_SHA256" ] || fail binary-sha256-mismatch
+[ "$(sha256sum -- "$binary_two" | awk '{print $1}')" = "$actual_binary_sha" ] || \
+  fail second-binary-sha256-mismatch
+version_output=$("$binary_one" version) || fail version-readback-failed
+[ "$(printf '%s\n' "$version_output" | wc -l)" -eq 1 ] || \
+  fail version-readback-line-count-invalid
 read -r buildx_module buildx_version buildx_commit buildx_extra <<<"$version_output"
 [ "$buildx_module" = github.com/docker/buildx ] || fail version-readback-module-mismatch
 [ "$buildx_version" = "$HOST_BUILDX_VERSION" ] || fail version-readback-version-mismatch
 [ "$buildx_commit" = "$HOST_BUILDX_COMMIT" ] || fail version-readback-commit-mismatch
 [ -z "${buildx_extra:-}" ] || fail version-readback-extra-fields
+[ "$("$binary_two" version)" = "$version_output" ] || fail second-version-readback-mismatch
+
+"$go_bin" version -m "$binary_one" > "$module_raw_one" || fail module-readback-failed
+"$go_bin" version -m "$binary_two" > "$module_raw_two" || fail second-module-readback-failed
+bash "$module_checker" "$module_raw_one" "$expected_compiler" \
+  "$HOST_BUILDX_GO_ARCHIVE_VERSION" "$HOST_BUILDX_X_MOD_VERSION" >/dev/null
+bash "$module_checker" "$module_raw_two" "$expected_compiler" \
+  "$HOST_BUILDX_GO_ARCHIVE_VERSION" "$HOST_BUILDX_X_MOD_VERSION" >/dev/null
+awk -v compiler="$expected_compiler" '
+  NR == 1 { print "host-docker-buildx: " compiler; next }
+  { print }
+' "$module_raw_one" > "$module_manifest"
+awk -v compiler="$expected_compiler" '
+  NR == 1 { print "host-docker-buildx: " compiler; next }
+  { print }
+' "$module_raw_two" > "$module_canonical_two"
+cmp -s "$module_manifest" "$module_canonical_two" || fail module-readbacks-not-reproducible
+bash "$module_checker" "$module_manifest" "$expected_compiler" \
+  "$HOST_BUILDX_GO_ARCHIVE_VERSION" "$HOST_BUILDX_X_MOD_VERSION" >/dev/null
+
+{
+  printf 'record\tname\tversion\tsha256\n'
+  printf 'source\tbuildx\t%s\t%s\n' "$HOST_BUILDX_VERSION" "$actual_source_sha"
+  printf 'patch\tbuildx-security\tlocked-vendor-upgrade\t%s\n' "$actual_patch_sha"
+  printf 'compiler\tgo\t%s\t%s\n' "$HOST_BUILDX_GO_VERSION" "$actual_go_sha"
+  printf 'module\tgithub.com/moby/go-archive\t%s\t-\n' "$HOST_BUILDX_GO_ARCHIVE_VERSION"
+  printf 'module\tgolang.org/x/mod\t%s\t-\n' "$HOST_BUILDX_X_MOD_VERSION"
+  printf 'binary\tbuildx-first\t%s\t%s\n' "$HOST_BUILDX_VERSION" "$actual_binary_sha"
+  printf 'binary\tbuildx-second\t%s\t%s\n' "$HOST_BUILDX_VERSION" "$actual_binary_sha"
+} > "$build_manifest"
+chmod 0444 "$module_manifest" "$build_manifest"
+touch --no-dereference --date="@${HOST_BUILDX_SOURCE_DATE_EPOCH}" \
+  "$module_manifest" "$build_manifest"
 
 assert_destination_root_identity
 [ ! -e "$bin_dir" ] && [ ! -L "$bin_dir" ] || fail destination-bin-already-exists
 mkdir -m 0700 -- "$bin_dir"
 [ ! -e "$target" ] && [ ! -L "$target" ] || fail destination-target-already-exists
-mv -- "$asset_download" "$target"
-asset_download=
+mv -- "$binary_one" "$target"
 chmod 0555 "$target"
-assert_destination_root_identity
+touch --no-dereference --date="@${HOST_BUILDX_SOURCE_DATE_EPOCH}" "$target"
+[ "$(sha256sum -- "$target" | awk '{print $1}')" = "$HOST_BUILDX_BINARY_SHA256" ] || \
+  fail installed-binary-sha256-mismatch
 [ "$("$target" version)" = "$version_output" ] || fail installed-version-readback-mismatch
-rm -f -- "$checksums_download"
-checksums_download=
+
+cleanup_working_files || fail exact-working-cleanup-failed
 completed=1
 
-printf 'ECR_SYNC_LOCKED_HOST_BUILDX_OK version=%s commit=%s sha256=%s path=%s\n' \
-  "$buildx_version" "$buildx_commit" "$actual_asset_sha" "$target" >&2
+printf 'ECR_SYNC_LOCKED_HOST_BUILDX_OK version=%s commit=%s sha256=%s source_sha256=%s patch_sha256=%s go_sha256=%s reproducible=2 path=%s\n' \
+  "$buildx_version" "$buildx_commit" "$actual_binary_sha" "$actual_source_sha" \
+  "$actual_patch_sha" "$actual_go_sha" "$target" >&2
 printf '%s\n' "$target"

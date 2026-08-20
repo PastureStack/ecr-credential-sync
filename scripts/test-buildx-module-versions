@@ -1,0 +1,80 @@
+#!/bin/bash
+set -euo pipefail
+
+repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
+checker="${repo_root}/scripts/check-buildx-module-versions"
+fixture_root=$(mktemp -d)
+case "$fixture_root" in /tmp/*|/var/tmp/*) ;; *) exit 1 ;; esac
+trap 'rm -rf -- "$fixture_root"' EXIT
+
+write_manifest() {
+  local path=$1
+  local go_archive_version=$2
+  local x_mod_version=$3
+  {
+    printf 'fixture/docker-buildx: go1.26.6\n'
+    printf '\tpath\tgithub.com/docker/buildx/cmd/buildx\n'
+    printf '\tmod\tgithub.com/docker/buildx\t(devel)\t\n'
+    printf '\tdep\tgithub.com/moby/go-archive\t%s\t\n' "$go_archive_version"
+    printf '\tdep\tgolang.org/x/mod\t%s\t\n' "$x_mod_version"
+  } > "$path"
+}
+
+expect_failure() {
+  local name=$1
+  local expected_reason=$2
+  shift 2
+  if "$@" >"${fixture_root}/${name}.stdout" 2>"${fixture_root}/${name}.stderr"; then
+    printf 'expected Buildx module fixture to fail: %s\n' "$name" >&2
+    exit 1
+  fi
+  grep -F "reason=${expected_reason}" "${fixture_root}/${name}.stderr" >/dev/null
+}
+
+positive="${fixture_root}/positive.txt"
+write_manifest "$positive" v0.3.0 v0.40.0
+bash "$checker" "$positive" go1.26.6 v0.3.0 v0.40.0 >/dev/null
+
+go_archive_old="${fixture_root}/cve-2026-17106-go-archive-v0.2.1.txt"
+write_manifest "$go_archive_old" v0.2.1 v0.40.0
+expect_failure cve-2026-17106 dependency-records-not-exact \
+  bash "$checker" "$go_archive_old" go1.26.6 v0.3.0 v0.40.0
+
+for cve in cve-2026-56864 cve-2026-56865; do
+  x_mod_old="${fixture_root}/${cve}-x-mod-v0.38.0.txt"
+  write_manifest "$x_mod_old" v0.3.0 v0.38.0
+  expect_failure "$cve" dependency-records-not-exact \
+    bash "$checker" "$x_mod_old" go1.26.6 v0.3.0 v0.40.0
+done
+
+missing="${fixture_root}/missing-x-mod.txt"
+write_manifest "$missing" v0.3.0 v0.40.0
+grep -v $'\tdep\tgolang.org/x/mod\t' "$missing" > "${missing}.new"
+mv -- "${missing}.new" "$missing"
+expect_failure missing-x-mod dependency-records-not-exact \
+  bash "$checker" "$missing" go1.26.6 v0.3.0 v0.40.0
+
+duplicate="${fixture_root}/duplicate-go-archive.txt"
+write_manifest "$duplicate" v0.3.0 v0.40.0
+printf '\tdep\tgithub.com/moby/go-archive\tv0.3.0\t\n' >> "$duplicate"
+expect_failure duplicate-go-archive dependency-records-not-exact \
+  bash "$checker" "$duplicate" go1.26.6 v0.3.0 v0.40.0
+
+extra_field="${fixture_root}/extra-field.txt"
+write_manifest "$extra_field" v0.3.0 v0.40.0
+printf '\tdep\tgithub.com/moby/go-archive\tv0.3.0\t\textra\n' >> "$extra_field"
+expect_failure extra-field dependency-records-not-exact \
+  bash "$checker" "$extra_field" go1.26.6 v0.3.0 v0.40.0
+
+legacy_docker="${fixture_root}/legacy-docker-module.txt"
+write_manifest "$legacy_docker" v0.3.0 v0.40.0
+printf '\tdep\tgithub.com/docker/docker\tv28.5.2+incompatible\t\n' >> "$legacy_docker"
+expect_failure legacy-docker-module dependency-records-not-exact \
+  bash "$checker" "$legacy_docker" go1.26.6 v0.3.0 v0.40.0
+
+compiler="${fixture_root}/compiler-mismatch.txt"
+write_manifest "$compiler" v0.3.0 v0.40.0
+expect_failure compiler-mismatch compiler-mismatch \
+  bash "$checker" "$compiler" go1.26.5 v0.3.0 v0.40.0
+
+printf 'ECR_SYNC_BUILDX_MODULE_FIXTURES_OK positive=1 negative=8 cves=3\n'

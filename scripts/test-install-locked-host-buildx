@@ -1,10 +1,10 @@
 #!/bin/bash
 set -euo pipefail
 
-repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
 # shellcheck disable=SC1091
 source "$repo_root/toolchain/host-build-toolchain.lock"
-test "$HOST_BUILDX_INSTALL_METHOD" = repository-locked-release-installer
+test "$HOST_BUILDX_INSTALL_METHOD" = repository-locked-offline-source-builder
 test "$HOST_BUILDX_INSTALLER_PATH" = scripts/install-locked-host-buildx
 test "$HOST_BUILDX_PLUGIN_RELATIVE_PATH" = cli-plugins/docker-buildx
 fixture_root=$(mktemp -d)
@@ -16,39 +16,150 @@ trap 'rm -rf -- "$fixture_root"' EXIT
 
 create_case() {
   local name=$1
-  local reported_version=$2
   case_root="${fixture_root}/${name}"
   fixture_repo="${case_root}/repository"
   fixture_bin="${case_root}/fake-bin"
   fixture_destination="${case_root}/destination"
   fixture_payload="${case_root}/docker-buildx.fixture"
-  fixture_checksums="${case_root}/checksums.fixture"
+  fixture_go_tree="${case_root}/go-tree"
+  fixture_source_tree="${case_root}/source-tree"
+  fixture_go_archive="${case_root}/go.fixture.tar.gz"
+  fixture_source_archive="${case_root}/source.fixture.tar.gz"
   fixture_installer="${fixture_repo}/scripts/install-locked-host-buildx"
 
-  mkdir -p "$fixture_repo/scripts" "$fixture_repo/toolchain" \
-    "$fixture_bin" "$fixture_destination"
+  mkdir -p \
+    "$fixture_repo/scripts" \
+    "$fixture_repo/toolchain" \
+    "$fixture_bin" \
+    "$fixture_destination" \
+    "$fixture_go_tree/go/bin" \
+    "$fixture_source_tree/buildx-${HOST_BUILDX_COMMIT}/vendor"
   cp "$repo_root/scripts/install-locked-host-buildx" "$fixture_installer"
+  cp "$repo_root/scripts/check-buildx-module-versions" \
+    "$fixture_repo/scripts/check-buildx-module-versions"
+  cp "$repo_root/toolchain/buildx-security.patch" \
+    "$fixture_repo/toolchain/buildx-security.patch"
   cp "$repo_root/toolchain/host-build-toolchain.lock" \
     "$fixture_repo/toolchain/host-build-toolchain.lock"
 
-  cat > "$fixture_payload" <<EOF
+  cat > "$fixture_payload" <<'EOF'
 #!/bin/sh
-if [ "\$#" -eq 1 ] && [ "\$1" = version ]; then
-  printf '%s\n' 'github.com/docker/buildx ${reported_version} 1d8dde89b8aba914e05e45366770736fea1fd690'
+if [ "$#" -eq 1 ] && [ "$1" = version ]; then
+  printf '%s\n' "github.com/docker/buildx ${FIXTURE_REPORTED_VERSION:-v0.36.1} 1d8dde89b8aba914e05e45366770736fea1fd690"
   exit 0
 fi
 exit 64
 EOF
   chmod 0700 "$fixture_payload"
-  fixture_asset_sha=$(sha256sum -- "$fixture_payload")
-  fixture_asset_sha=${fixture_asset_sha%% *}
-  printf '%s *%s\n' "$fixture_asset_sha" 'buildx-v0.36.1.linux-amd64' \
-    > "$fixture_checksums"
-  fixture_checksums_sha=$(sha256sum -- "$fixture_checksums")
-  fixture_checksums_sha=${fixture_checksums_sha%% *}
+
+  cat > "$fixture_go_tree/go/bin/go" <<'EOF'
+#!/bin/bash
+set -euo pipefail
+case "${1-}" in
+  telemetry)
+    [ "${2-}" = off ]
+    exit 0
+    ;;
+  version)
+    if [ "$#" -eq 1 ]; then
+      printf 'go version go1.26.6 linux/amd64\n'
+      exit 0
+    fi
+    if [ "$#" -eq 3 ] && [ "$2" = -m ]; then
+      go_archive=v0.3.0
+      x_mod=v0.40.0
+      case "${FIXTURE_CASE:-success}" in
+        cve-2026-17106) go_archive=v0.2.1 ;;
+        cve-2026-56864|cve-2026-56865) x_mod=v0.38.0 ;;
+      esac
+      printf '%s: go1.26.6\n' "$3"
+      printf '\tpath\tgithub.com/docker/buildx/cmd/buildx\n'
+      printf '\tmod\tgithub.com/docker/buildx\t(devel)\t\n'
+      printf '\tdep\tgithub.com/moby/go-archive\t%s\t\n' "$go_archive"
+      printf '\tdep\tgolang.org/x/mod\t%s\t\n' "$x_mod"
+      exit 0
+    fi
+    ;;
+  list)
+    printf '%s\n' github.com/docker/buildx/cmd/buildx github.com/moby/go-archive golang.org/x/mod
+    exit 0
+    ;;
+  build)
+    [ "${FIXTURE_CASE:-success}" != build-failure ] || exit 31
+    output=
+    shift
+    while [ "$#" -gt 0 ]; do
+      case "$1" in
+        -o)
+          output=$2
+          shift 2
+          ;;
+        *) shift ;;
+      esac
+    done
+    [ -n "$output" ]
+    cp -- "$FIXTURE_BINARY" "$output"
+    if [ "${FIXTURE_CASE:-success}" = reproducibility-mismatch ] &&
+       [ "${output##*/}" = .docker-buildx-2 ]; then
+      printf '# second build differs\n' >> "$output"
+    fi
+    chmod 0700 "$output"
+    exit 0
+    ;;
+esac
+exit 64
+EOF
+  cat > "$fixture_go_tree/go/bin/gofmt" <<'EOF'
+#!/bin/bash
+set -euo pipefail
+[ "${1-}" = -d ]
+[ "${2-}" = -- ]
+[ -f "${3-}" ]
+exit 0
+EOF
+  chmod 0700 "$fixture_go_tree/go/bin/go" "$fixture_go_tree/go/bin/gofmt"
+
+  cat > "$fixture_source_tree/buildx-${HOST_BUILDX_COMMIT}/go.mod" <<'EOF'
+module github.com/docker/buildx
+
+go 1.26.3
+
+require (
+	github.com/docker/docker v28.5.2+incompatible
+	github.com/moby/go-archive v0.2.1
+	golang.org/x/mod v0.38.0
+)
+EOF
+  cat > "$fixture_source_tree/buildx-${HOST_BUILDX_COMMIT}/vendor/modules.txt" <<'EOF'
+# github.com/docker/docker v28.5.2+incompatible
+## explicit
+github.com/docker/docker/pkg/namesgenerator
+# github.com/moby/go-archive v0.2.1
+## explicit
+github.com/moby/go-archive
+# golang.org/x/mod v0.38.0
+## explicit
+golang.org/x/mod/modfile
+EOF
+  printf 'package fixture\n' \
+    > "$fixture_source_tree/buildx-${HOST_BUILDX_COMMIT}/fixture.go"
+  tar -czf "$fixture_go_archive" -C "$fixture_go_tree" go
+  tar -czf "$fixture_source_archive" -C "$fixture_source_tree" \
+    "buildx-${HOST_BUILDX_COMMIT}"
+
+  fixture_go_sha=$(sha256sum -- "$fixture_go_archive")
+  fixture_go_sha=${fixture_go_sha%% *}
+  fixture_source_sha=$(sha256sum -- "$fixture_source_archive")
+  fixture_source_sha=${fixture_source_sha%% *}
+  fixture_binary_sha=$(sha256sum -- "$fixture_payload")
+  fixture_binary_sha=${fixture_binary_sha%% *}
+  fixture_patch_sha=$(sha256sum -- "$fixture_repo/toolchain/buildx-security.patch")
+  fixture_patch_sha=${fixture_patch_sha%% *}
   sed -i \
-    -e "s/^HOST_BUILDX_ASSET_SHA256=.*/HOST_BUILDX_ASSET_SHA256=${fixture_asset_sha}/" \
-    -e "s/^HOST_BUILDX_CHECKSUMS_SHA256=.*/HOST_BUILDX_CHECKSUMS_SHA256=${fixture_checksums_sha}/" \
+    -e "s/^HOST_BUILDX_GO_SHA256=.*/HOST_BUILDX_GO_SHA256=${fixture_go_sha}/" \
+    -e "s/^HOST_BUILDX_SOURCE_SHA256=.*/HOST_BUILDX_SOURCE_SHA256=${fixture_source_sha}/" \
+    -e "s/^HOST_BUILDX_SECURITY_PATCH_SHA256=.*/HOST_BUILDX_SECURITY_PATCH_SHA256=${fixture_patch_sha}/" \
+    -e "s/^HOST_BUILDX_BINARY_SHA256=.*/HOST_BUILDX_BINARY_SHA256=${fixture_binary_sha}/" \
     "$fixture_repo/toolchain/host-build-toolchain.lock"
 
   cat > "$fixture_bin/curl" <<'EOF'
@@ -79,25 +190,56 @@ while [ "$#" -gt 0 ]; do
 done
 [ -n "$output" ] && [ -n "$url" ]
 case "$url" in
-  */checksums.txt) cp -- "$FIXTURE_CHECKSUMS" "$output" ;;
-  */buildx-v0.36.1.linux-amd64) cp -- "$FIXTURE_BINARY" "$output" ;;
+  https://go.dev/dl/go1.26.6.linux-amd64.tar.gz)
+    cp -- "$FIXTURE_GO_ARCHIVE" "$output"
+    ;;
+  https://codeload.github.com/docker/buildx/tar.gz/1d8dde89b8aba914e05e45366770736fea1fd690)
+    cp -- "$FIXTURE_SOURCE_ARCHIVE" "$output"
+    ;;
   *) exit 22 ;;
 esac
 EOF
-  chmod 0700 "$fixture_bin/curl" "$fixture_installer"
+
+  cat > "$fixture_bin/git" <<'EOF'
+#!/bin/bash
+set -euo pipefail
+[ "${1-}" = apply ] || exit 64
+[ "${FIXTURE_CASE:-success}" != patch-apply-failure ] || exit 41
+if [ "${2-}" = --check ]; then
+  exit 0
+fi
+if [ "${2-}" = --reverse ] && [ "${3-}" = --check ]; then
+  exit 0
+fi
+if [ "${2-}" = --numstat ]; then
+  printf '1\t1\tfixture.go\n'
+  exit 0
+fi
+sed -i \
+  -e '/github.com\/docker\/docker v28.5.2+incompatible/d' \
+  -e 's#github.com/moby/go-archive v0.2.1#github.com/moby/go-archive v0.3.0#' \
+  -e 's#golang.org/x/mod v0.38.0#golang.org/x/mod v0.40.0#' \
+  go.mod vendor/modules.txt
+sed -i '/github.com\/docker\/docker\/pkg\/namesgenerator/d' vendor/modules.txt
+exit 0
+EOF
+  chmod 0700 \
+    "$fixture_bin/curl" \
+    "$fixture_bin/git" \
+    "$fixture_installer" \
+    "$fixture_repo/scripts/check-buildx-module-versions"
 }
 
 run_installer() {
   PATH="${fixture_bin}:${PATH}" \
     HOME="${FIXTURE_HOME_OVERRIDE:-${HOME:-}}" \
     FIXTURE_BINARY="$fixture_payload" \
-    FIXTURE_CHECKSUMS="$fixture_checksums" \
+    FIXTURE_GO_ARCHIVE="$fixture_go_archive" \
+    FIXTURE_SOURCE_ARCHIVE="$fixture_source_archive" \
+    FIXTURE_CASE="${FIXTURE_CASE:-success}" \
+    FIXTURE_REPORTED_VERSION="${FIXTURE_REPORTED_VERSION:-v0.36.1}" \
     FIXTURE_DOWNLOAD_FAIL="${FIXTURE_DOWNLOAD_FAIL:-0}" \
     bash "$fixture_installer" "$fixture_destination"
-}
-
-run_installer_download_failure() {
-  FIXTURE_DOWNLOAD_FAIL=1 run_installer
 }
 
 run_installer_global_plugin() {
@@ -115,58 +257,108 @@ expect_failure() {
   grep -F "reason=${expected_reason}" "${case_root}/${name}.stderr" >/dev/null
 }
 
-create_case success v0.36.1
+expect_clean_build_failure() {
+  local name=$1
+  local expected_reason=$2
+  shift 2
+  expect_failure "$name" "$expected_reason" "$@"
+  if find "$fixture_destination" -mindepth 1 -print -quit | grep -q .; then
+    printf 'failed source build left destination content: %s\n' "$name" >&2
+    exit 1
+  fi
+}
+
+create_case success
 installed_path=$(run_installer 2>"${case_root}/success.stderr")
 test "$installed_path" = "${fixture_destination}/bin/docker-buildx"
 test -x "$installed_path"
 test "$(stat -c '%a' "$installed_path")" = 555
 test "$("$installed_path" version)" = \
   'github.com/docker/buildx v0.36.1 1d8dde89b8aba914e05e45366770736fea1fd690'
+bash "${fixture_repo}/scripts/check-buildx-module-versions" \
+  "${fixture_destination}/buildx-go-version.txt" go1.26.6 v0.3.0 v0.40.0 >/dev/null
+test "$(grep -Fc $'binary\tbuildx-first\tv0.36.1\t' "${fixture_destination}/buildx-build.tsv")" -eq 1
+test "$(grep -Fc $'binary\tbuildx-second\tv0.36.1\t' "${fixture_destination}/buildx-build.tsv")" -eq 1
+test "$(find "$fixture_destination" -mindepth 1 -maxdepth 1 -printf '%f\n' | LC_ALL=C sort)" = \
+  $'bin\nbuildx-build.tsv\nbuildx-go-version.txt'
 
-create_case hash-mismatch v0.36.1
-printf '\n' >> "$fixture_payload"
-expect_failure hash-mismatch asset-sha256-mismatch run_installer
+create_case go-hash-mismatch
+printf '\n' >> "$fixture_go_archive"
+expect_clean_build_failure go-hash-mismatch go-sha256-mismatch run_installer
 
-create_case version-mismatch v0.35.0
-expect_failure version-mismatch version-readback-version-mismatch run_installer
+create_case source-hash-mismatch
+printf '\n' >> "$fixture_source_archive"
+expect_clean_build_failure source-hash-mismatch source-sha256-mismatch run_installer
 
-create_case existing-destination v0.36.1
+create_case patch-hash-mismatch
+printf '\n' >> "$fixture_repo/toolchain/buildx-security.patch"
+expect_clean_build_failure patch-hash-mismatch security-patch-sha256-mismatch run_installer
+
+create_case binary-hash-mismatch
+sed -i \
+  's/^HOST_BUILDX_BINARY_SHA256=.*/HOST_BUILDX_BINARY_SHA256=0000000000000000000000000000000000000000000000000000000000000000/' \
+  "$fixture_repo/toolchain/host-build-toolchain.lock"
+expect_clean_build_failure binary-hash-mismatch binary-sha256-mismatch run_installer
+
+create_case version-mismatch
+FIXTURE_REPORTED_VERSION=v0.35.0 \
+  expect_clean_build_failure version-mismatch version-readback-version-mismatch run_installer
+
+create_case reproducibility-mismatch
+FIXTURE_CASE=reproducibility-mismatch \
+  expect_clean_build_failure reproducibility-mismatch binaries-not-reproducible run_installer
+
+create_case build-failure
+FIXTURE_CASE=build-failure \
+  expect_clean_build_failure build-failure offline-build-failed run_installer
+
+create_case patch-apply-failure
+FIXTURE_CASE=patch-apply-failure \
+  expect_clean_build_failure patch-apply-failure security-patch-apply-failed run_installer
+
+for cve in cve-2026-17106 cve-2026-56864 cve-2026-56865; do
+  create_case "$cve"
+  FIXTURE_CASE="$cve" \
+    expect_clean_build_failure "$cve" dependency-records-not-exact run_installer
+done
+
+create_case existing-destination
 printf 'occupied\n' > "${fixture_destination}/existing"
 expect_failure existing-destination destination-root-not-empty run_installer
 
-create_case symlink-destination v0.36.1
+create_case symlink-destination
 real_destination="${case_root}/real-destination"
 mv "$fixture_destination" "$real_destination"
 ln -s "$real_destination" "$fixture_destination"
 expect_failure symlink-destination destination-root-is-symlink run_installer
 
-create_case writable-destination v0.36.1
+create_case writable-destination
 chmod 0770 "$fixture_destination"
 expect_failure writable-destination destination-root-group-or-world-writable run_installer
 
-create_case writable-parent v0.36.1
+create_case writable-parent
 chmod 0755 "$fixture_root"
 chmod 0777 "$case_root"
 expect_failure writable-parent destination-ancestor-writable-without-sticky-bit \
   run_installer
 chmod 0700 "$fixture_root"
 
-create_case group-writable-parent v0.36.1
+create_case group-writable-parent
 chmod 0755 "$fixture_root"
 chmod 0770 "$case_root"
 expect_failure group-writable-parent destination-ancestor-writable-without-sticky-bit \
   run_installer
 chmod 0700 "$fixture_root"
 
-create_case global-plugin-destination v0.36.1
+create_case global-plugin-destination
 fixture_home="${case_root}/home"
 fixture_destination="${fixture_home}/.docker/cli-plugins"
 mkdir -p "$fixture_destination"
 expect_failure global-plugin-destination destination-root-is-global-docker-config \
   run_installer_global_plugin
 
-create_case download-failure v0.36.1
-expect_failure download-failure checksums-download-failed \
-  run_installer_download_failure
+create_case download-failure
+FIXTURE_DOWNLOAD_FAIL=1 \
+  expect_clean_build_failure download-failure go-download-failed run_installer
 
-printf 'ECR_SYNC_LOCKED_HOST_BUILDX_FIXTURES_OK positive=1 negative=9\n'
+printf 'ECR_SYNC_LOCKED_HOST_BUILDX_FIXTURES_OK positive=1 negative=18 cves=3 source_builds=2 cleanup=exact-run-owned\n'

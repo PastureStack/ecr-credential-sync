@@ -40,7 +40,7 @@ jobs:
           set -euo pipefail
           umask 077
           source toolchain/host-build-toolchain.lock
-          test "$HOST_BUILDX_INSTALL_METHOD" = repository-locked-release-installer
+          test "$HOST_BUILDX_INSTALL_METHOD" = repository-locked-offline-source-builder
           test "$HOST_BUILDX_INSTALLER_PATH" = scripts/install-locked-host-buildx
           test "$HOST_BUILDX_PLUGIN_RELATIVE_PATH" = cli-plugins/docker-buildx
           for required_command in chmod cp find grep id mkdir realpath sha256sum stat; do
@@ -110,13 +110,28 @@ jobs:
           test "$(stat -Lc '%a' -- "$locked_buildx")" = 555
           locked_buildx_sha="$(sha256sum -- "$locked_buildx")"
           locked_buildx_sha="${locked_buildx_sha%% *}"
-          test "$locked_buildx_sha" = "$HOST_BUILDX_ASSET_SHA256"
+          test "$locked_buildx_sha" = "$HOST_BUILDX_BINARY_SHA256"
           read -r buildx_module buildx_version buildx_commit buildx_extra \
             <<<"$("$locked_buildx" version)"
           test "$buildx_module" = github.com/docker/buildx
           test "$buildx_version" = "$HOST_BUILDX_VERSION"
           test "$buildx_commit" = "$HOST_BUILDX_COMMIT"
           test -z "${buildx_extra:-}"
+          test -f "${install_root}/buildx-go-version.txt"
+          test ! -L "${install_root}/buildx-go-version.txt"
+          test "$(stat -Lc '%a' -- "${install_root}/buildx-go-version.txt")" = 444
+          bash scripts/check-buildx-module-versions \
+            "${install_root}/buildx-go-version.txt" \
+            "go${HOST_BUILDX_GO_VERSION}" \
+            "$HOST_BUILDX_GO_ARCHIVE_VERSION" \
+            "$HOST_BUILDX_X_MOD_VERSION"
+          test -f "${install_root}/buildx-build.tsv"
+          test ! -L "${install_root}/buildx-build.tsv"
+          test "$(stat -Lc '%a' -- "${install_root}/buildx-build.tsv")" = 444
+          test "$(grep -Fc $'binary\tbuildx-first\t'"${HOST_BUILDX_VERSION}"$'\t'"${HOST_BUILDX_BINARY_SHA256}" \
+            "${install_root}/buildx-build.tsv")" -eq 1
+          test "$(grep -Fc $'binary\tbuildx-second\t'"${HOST_BUILDX_VERSION}"$'\t'"${HOST_BUILDX_BINARY_SHA256}" \
+            "${install_root}/buildx-build.tsv")" -eq 1
 
           cli_plugins="${docker_config_root}/cli-plugins"
           docker_buildx_plugin="${docker_config_root}/${HOST_BUILDX_PLUGIN_RELATIVE_PATH}"
@@ -130,7 +145,7 @@ jobs:
           test "$(stat -Lc '%a' -- "$docker_buildx_plugin")" = 555
           plugin_sha="$(sha256sum -- "$docker_buildx_plugin")"
           plugin_sha="${plugin_sha%% *}"
-          test "$plugin_sha" = "$HOST_BUILDX_ASSET_SHA256"
+          test "$plugin_sha" = "$HOST_BUILDX_BINARY_SHA256"
           test "$(stat -Lc '%d:%i:%u:%g:%a' -- "$install_root")" = "$install_root_identity"
           test "$(stat -Lc '%d:%i:%u:%g:%a' -- "$docker_config_root")" = "$docker_config_root_identity"
 
@@ -151,6 +166,7 @@ jobs:
           mkdir -p evidence
           git rev-parse HEAD > evidence/source-revision.txt
           sha256sum \
+            .gitattributes \
             .dockerignore \
             README.md \
             SECURITY.md \
@@ -163,6 +179,7 @@ jobs:
             toolchain/host-build-toolchain.lock \
             scripts/build \
             scripts/build-runtime-image \
+            scripts/check-buildx-module-versions \
             scripts/check-go-telemetry-state \
             scripts/ci \
             scripts/entry \
@@ -175,6 +192,7 @@ jobs:
             scripts/generate-source-sbom.py \
             scripts/test \
             scripts/test-buildx-buildkit-version \
+            scripts/test-buildx-module-versions \
             scripts/test-dapper-image-identity \
             scripts/test-go-telemetry-state \
             scripts/test-install-locked-host-buildx \
@@ -186,9 +204,16 @@ jobs:
           source toolchain/host-build-toolchain.lock
           test "$HOST_BUILDX_VERSION" = v0.36.1
           test "$HOST_BUILDX_COMMIT" = 1d8dde89b8aba914e05e45366770736fea1fd690
+          test "$HOST_BUILDX_SOURCE_SHA256" = fb28b5c2a198d05482f0656dfb7ee161240a904e36697bf7108e5d517f23854b
+          test "$HOST_BUILDX_SECURITY_PATCH_SHA256" = b615fea76706a4c16e2af354b3a92d7b8b0465dce4f2d2c20b7a87bdc3100ad2
+          test "$HOST_BUILDX_GO_VERSION" = 1.26.6
+          test "$HOST_BUILDX_GO_SHA256" = 708effb774be8237570d0add163225abbdfaf4fca28b2611df167beba4feef89
+          test "$HOST_BUILDX_GO_ARCHIVE_VERSION" = v0.3.0
+          test "$HOST_BUILDX_X_MOD_VERSION" = v0.40.0
+          test "$HOST_BUILDX_BINARY_SHA256" = ebb6935c31ef883684ec1721be8cc7e5d0386e5a445e90b7e81c7c8f5dac991d
           test "$HOST_BUILDKIT_VERSION" = v0.32.2
           test "$HOST_BUILDKIT_IMAGE" = "$DAPPER_BUILDKIT_IMAGE"
-          test "$HOST_BUILDX_INSTALL_METHOD" = repository-locked-release-installer
+          test "$HOST_BUILDX_INSTALL_METHOD" = repository-locked-offline-source-builder
           test "$HOST_BUILDX_INSTALLER_PATH" = scripts/install-locked-host-buildx
           test "$HOST_BUILDX_PLUGIN_RELATIVE_PATH" = cli-plugins/docker-buildx
           cp toolchain/host-build-toolchain.lock evidence/host-build-toolchain.lock
@@ -197,10 +222,19 @@ jobs:
           test "$DOCKER_CONFIG" = "$ECR_SYNC_DOCKER_CONFIG_ROOT"
           host_buildx_sha="$(sha256sum -- "$DAPPER_BUILDX_COMMAND")"
           host_buildx_sha="${host_buildx_sha%% *}"
-          test "$host_buildx_sha" = "$HOST_BUILDX_ASSET_SHA256"
+          test "$host_buildx_sha" = "$HOST_BUILDX_BINARY_SHA256"
           test "$(sha256sum -- "$DOCKER_CONFIG/$HOST_BUILDX_PLUGIN_RELATIVE_PATH" | cut -d ' ' -f 1)" = \
-            "$HOST_BUILDX_ASSET_SHA256"
+            "$HOST_BUILDX_BINARY_SHA256"
           printf '%s\n' "$host_buildx_sha" > evidence/host-buildx-binary.sha256
+          cp "${ECR_SYNC_BUILDX_INSTALL_ROOT}/buildx-go-version.txt" \
+            evidence/host-buildx-go-version.txt
+          cp "${ECR_SYNC_BUILDX_INSTALL_ROOT}/buildx-build.tsv" \
+            evidence/host-buildx-build.tsv
+          bash scripts/check-buildx-module-versions \
+            evidence/host-buildx-go-version.txt \
+            "go${HOST_BUILDX_GO_VERSION}" \
+            "$HOST_BUILDX_GO_ARCHIVE_VERSION" \
+            "$HOST_BUILDX_X_MOD_VERSION"
           docker buildx version | tee evidence/host-buildx-version.txt
           read -r buildx_module buildx_version buildx_commit \
             < evidence/host-buildx-version.txt
@@ -578,11 +612,9 @@ jobs:
             /usr/share/pasturestack/patches/buildx-security.patch \
             > evidence/buildx-security.patch
           diff -u toolchain/buildx-security.patch evidence/buildx-security.patch
-          echo '9d424e752f24ea0e34ccd80340428f067ae8109204c401c93786a2b0be6ea993  evidence/buildx-security.patch' | sha256sum -c -
-          if grep -F $'dep\tgithub.com/docker/docker\t' evidence/buildx-go-version.txt; then
-            echo 'patched Buildx binary still records github.com/docker/docker' >&2
-            exit 1
-          fi
+          echo 'b615fea76706a4c16e2af354b3a92d7b8b0465dce4f2d2c20b7a87bdc3100ad2  evidence/buildx-security.patch' | sha256sum -c -
+          bash scripts/check-buildx-module-versions \
+            evidence/buildx-go-version.txt go1.26.6 v0.3.0 v0.40.0
           docker run --rm --entrypoint go \
             --volume "$PWD:/work:ro" "$DAPPER_IMAGE" \
             version -m /work/bin/ecr-credential-sync \
@@ -611,7 +643,19 @@ jobs:
             rm -rf "$source_tree"
           }
           trap cleanup_scan EXIT
-          mkdir -p "$trivy_cache"
+          test ! -e "$trivy_cache"
+          test ! -L "$trivy_cache"
+          mkdir -m 0700 -- "$trivy_cache"
+          test -d "$trivy_cache"
+          test ! -L "$trivy_cache"
+          test -O "$trivy_cache"
+          test "$(realpath -e -- "$trivy_cache")" = "$trivy_cache"
+          test "$(stat -Lc '%u:%g:%a' -- "$trivy_cache")" = "$(id -u):$(id -g):700"
+          trivy_cache_identity="$(stat -Lc '%d:%i:%u:%g:%a' -- "$trivy_cache")"
+          {
+            printf 'ECR_SYNC_TRIVY_CACHE_ROOT=%s\n' "$trivy_cache"
+            printf 'ECR_SYNC_TRIVY_CACHE_ROOT_IDENTITY=%s\n' "$trivy_cache_identity"
+          } >> "$GITHUB_ENV"
           git archive --format=tar HEAD | tar -xf - -C "$source_tree"
 
           docker run --rm \
@@ -621,6 +665,25 @@ jobs:
             cd "$trivy_cache"
             find . -type f -print0 | LC_ALL=C sort -z | xargs -0 -r sha256sum
           ) > evidence/trivy-database.sha256
+          trivy_metadata="${trivy_cache}/db/metadata.json"
+          trivy_database="${trivy_cache}/db/trivy.db"
+          for database_file in "$trivy_metadata" "$trivy_database"; do
+            test -f "$database_file"
+            test ! -L "$database_file"
+            test -s "$database_file"
+          done
+          trivy_updated_at="$(jq -er '.UpdatedAt | strings | select(length > 0)' "$trivy_metadata")"
+          {
+            printf 'file\tbytes\tsha256\n'
+            printf 'db/metadata.json\t%s\t%s\n' \
+              "$(stat -Lc '%s' -- "$trivy_metadata")" \
+              "$(sha256sum -- "$trivy_metadata" | awk '{print $1}')"
+            printf 'db/trivy.db\t%s\t%s\n' \
+              "$(stat -Lc '%s' -- "$trivy_database")" \
+              "$(sha256sum -- "$trivy_database" | awk '{print $1}')"
+          } > evidence/trivy-database-files.tsv
+          printf '%s\n' "$trivy_updated_at" > evidence/trivy-database-updated-at.txt
+          cp "$trivy_metadata" evidence/trivy-database-metadata.json
 
           docker run --rm \
             --volume "$source_tree:/scan:ro" \
@@ -690,6 +753,22 @@ jobs:
               | select(.value == "docker-archive-rewrite-timestamp+explicit-image-load")
             ] | length == 1
           ' evidence/source.cdx.json >/dev/null
+          jq -e '
+            def exact_property($name; $value):
+              [.metadata.properties[]?
+                | select(.name == $name and .value == $value)
+              ] | length == 1;
+            exact_property("pasturestack:host-buildx-version"; "v0.36.1") and
+            exact_property("pasturestack:host-buildx-commit"; "1d8dde89b8aba914e05e45366770736fea1fd690") and
+            exact_property("pasturestack:host-buildx-source-sha256"; "fb28b5c2a198d05482f0656dfb7ee161240a904e36697bf7108e5d517f23854b") and
+            exact_property("pasturestack:host-buildx-security-patch-sha256"; "b615fea76706a4c16e2af354b3a92d7b8b0465dce4f2d2c20b7a87bdc3100ad2") and
+            exact_property("pasturestack:host-buildx-go-version"; "1.26.6") and
+            exact_property("pasturestack:host-buildx-go-sha256"; "708effb774be8237570d0add163225abbdfaf4fca28b2611df167beba4feef89") and
+            exact_property("pasturestack:host-buildx-go-archive-version"; "v0.3.0") and
+            exact_property("pasturestack:host-buildx-x-mod-version"; "v0.40.0") and
+            exact_property("pasturestack:host-buildx-binary-sha256"; "ebb6935c31ef883684ec1721be8cc7e5d0386e5a445e90b7e81c7c8f5dac991d") and
+            exact_property("pasturestack:host-buildx-install-method"; "repository-locked-offline-source-builder")
+          ' evidence/source.cdx.json >/dev/null
           cp security/openvex.json evidence/source.openvex.json
           docker run --rm \
             --volume "$PWD/evidence:/evidence" \
@@ -730,6 +809,39 @@ jobs:
               | select(.version == "1.8.1-4ubuntu2")
             ] | length == 1
           ' evidence/dapper.cdx.json >/dev/null
+          jq -e '
+            ([.components[]?
+              | select(.purl == "pkg:golang/github.com/moby/go-archive@v0.3.0")
+            ] | length) >= 1 and
+            ([.components[]?
+              | select(.purl == "pkg:golang/golang.org/x/mod@v0.40.0")
+            ] | length) >= 1 and
+            ([.components[]?
+              | select(.purl == "pkg:golang/github.com/moby/go-archive@v0.2.1")
+            ] | length) == 0 and
+            ([.components[]?
+              | select(.purl == "pkg:golang/golang.org/x/mod@v0.38.0")
+            ] | length) == 0
+          ' evidence/dapper.cdx.json >/dev/null
+          mapfile -t trivy_cache_entries < <(
+            cd "$trivy_cache"
+            find . -mindepth 1 -printf '%y\t%P\n' | LC_ALL=C sort
+          )
+          expected_trivy_cache_entries=(
+            $'d\tdb'
+            $'d\tfanal'
+            $'f\tdb/metadata.json'
+            $'f\tdb/trivy.db'
+          )
+          test "${#trivy_cache_entries[@]}" -eq "${#expected_trivy_cache_entries[@]}"
+          for index in "${!expected_trivy_cache_entries[@]}"; do
+            test "${trivy_cache_entries[$index]}" = "${expected_trivy_cache_entries[$index]}"
+          done
+          (
+            cd "$trivy_cache"
+            find . -mindepth 0 -maxdepth 2 \
+              -printf '%y\t%P\t%U:%G\t%m\t%s\n' | LC_ALL=C sort
+          ) > evidence/trivy-cache-ownership.tsv
 
       - name: Enforce source, builder, and runtime security policy
         shell: bash
@@ -812,6 +924,20 @@ jobs:
 
           dapper_report=evidence/dapper-security.json
           dapper_secrets="$(jq '[.Results[]?.Secrets[]?] | length' "$dapper_report")"
+          dapper_buildx_fixed_cve_regressions="$(jq '[
+            .Results[]?
+            | select(.Target == "usr/libexec/docker/cli-plugins/docker-buildx")
+            | .Vulnerabilities[]?
+            | select(
+                (.VulnerabilityID == "CVE-2026-17106" and
+                 .PkgName == "github.com/moby/go-archive" and
+                 .InstalledVersion == "v0.2.1") or
+                ((.VulnerabilityID == "CVE-2026-56864" or
+                  .VulnerabilityID == "CVE-2026-56865") and
+                 .PkgName == "golang.org/x/mod" and
+                 .InstalledVersion == "v0.38.0")
+              )
+          ] | length' "$dapper_report")"
           dapper_unreviewed="$(jq '[
             .Results[]?.Vulnerabilities[]?
             | select(.Severity == "CRITICAL" or .Severity == "HIGH")
@@ -850,10 +976,12 @@ jobs:
               ]
             }' > evidence/dapper.openvex.json
           dapper_reviewed="$(jq '.statements | length' evidence/dapper.openvex.json)"
-          printf 'dapper_secrets=%s\ndapper_reviewed_unfixed_linux_libc_dev=%s\ndapper_unreviewed_critical_high=%s\n' \
+          printf 'dapper_secrets=%s\ndapper_reviewed_unfixed_linux_libc_dev=%s\ndapper_unreviewed_critical_high=%s\ndapper_buildx_fixed_cve_regressions=%s\n' \
             "$dapper_secrets" "$dapper_reviewed" "$dapper_unreviewed" \
+            "$dapper_buildx_fixed_cve_regressions" \
             | tee -a evidence/security-summary.txt
           test "$dapper_secrets" -eq 0
+          test "$dapper_buildx_fixed_cve_regressions" -eq 0
           test "$dapper_unreviewed" -eq 0
           ! grep -Eq $'^package\tlinux-libc-dev([:]|\t)' evidence/runtime-dpkg.tsv
           test "$dapper_reviewed" -eq "$(wc -l < evidence/dapper-critical-high.tsv)"
@@ -923,7 +1051,93 @@ jobs:
             test ! -L "$root"
           }
 
+          cleanup_exact_trivy_cache() {
+            local root="$1"
+            local expected_identity="$2"
+            local canonical_runner_temp expected_root current_identity
+            local caller_uid caller_gid path owner
+            local -a exact_files exact_directories
+
+            test -n "$root" || return 0
+            test -n "$expected_identity"
+            canonical_runner_temp="$(realpath -e -- "$RUNNER_TEMP")"
+            expected_root="${canonical_runner_temp}/trivy-cache"
+            test "$root" = "$expected_root"
+            if [ ! -e "$root" ] && [ ! -L "$root" ]; then
+              return 0
+            fi
+            test -d "$root"
+            test ! -L "$root"
+            test -O "$root"
+            test "$(realpath -e -- "$root")" = "$root"
+            test "$(stat -Lc '%a' -- "$root")" = 700
+            current_identity="$(stat -Lc '%d:%i:%u:%g:%a' -- "$root")"
+            test "$current_identity" = "$expected_identity"
+            caller_uid="$(id -u)"
+            caller_gid="$(id -g)"
+            exact_files=(
+              "${root}/db/metadata.json"
+              "${root}/db/trivy.db"
+            )
+            exact_directories=(
+              "${root}/fanal"
+              "${root}/db"
+            )
+            while IFS= read -r path; do
+              case "$path" in
+                db|db/metadata.json|db/trivy.db|fanal) ;;
+                *) return 1 ;;
+              esac
+            done < <(find "$root" -mindepth 1 -printf '%P\n' | LC_ALL=C sort)
+            for path in "${exact_files[@]}"; do
+              if [ -e "$path" ] || [ -L "$path" ]; then
+                test -f "$path"
+                test ! -L "$path"
+                owner="$(stat -Lc '%u:%g' -- "$path")"
+                case "$owner" in
+                  "0:0"|"${caller_uid}:${caller_gid}") ;;
+                  *) return 1 ;;
+                esac
+              fi
+            done
+            for path in "${exact_directories[@]}"; do
+              if [ -e "$path" ] || [ -L "$path" ]; then
+                test -d "$path"
+                test ! -L "$path"
+                owner="$(stat -Lc '%u:%g' -- "$path")"
+                case "$owner" in
+                  "0:0"|"${caller_uid}:${caller_gid}") ;;
+                  *) return 1 ;;
+                esac
+              fi
+            done
+            for path in "${exact_files[@]}" "${exact_directories[@]}"; do
+              if [ -e "$path" ] || [ -L "$path" ]; then
+                owner="$(stat -Lc '%u:%g' -- "$path")"
+                if [ "$owner" = "0:0" ]; then
+                  sudo chown -- "${caller_uid}:${caller_gid}" "$path"
+                fi
+                test "$(stat -Lc '%u:%g' -- "$path")" = \
+                  "${caller_uid}:${caller_gid}"
+              fi
+            done
+            for path in "${exact_files[@]}"; do
+              rm -f -- "$path"
+            done
+            for path in "${exact_directories[@]}"; do
+              if [ -e "$path" ] || [ -L "$path" ]; then
+                rmdir -- "$path"
+              fi
+            done
+            rmdir -- "$root"
+            test ! -e "$root"
+            test ! -L "$root"
+          }
+
           run_identity="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${GITHUB_JOB}"
+          cleanup_exact_trivy_cache \
+            "${ECR_SYNC_TRIVY_CACHE_ROOT:-}" \
+            "${ECR_SYNC_TRIVY_CACHE_ROOT_IDENTITY:-}"
           cleanup_exact_home_root \
             "${ECR_SYNC_BUILDX_INSTALL_ROOT:-}" \
             "${ECR_SYNC_BUILDX_INSTALL_ROOT_IDENTITY:-}" \
@@ -932,4 +1146,4 @@ jobs:
             "${ECR_SYNC_DOCKER_CONFIG_ROOT:-}" \
             "${ECR_SYNC_DOCKER_CONFIG_ROOT_IDENTITY:-}" \
             ".pasturestack-ecr-docker-config-${run_identity}"
-          rm -rf bin dist evidence "$RUNNER_TEMP/trivy-cache"
+          rm -rf bin dist evidence

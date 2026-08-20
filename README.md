@@ -88,20 +88,29 @@ commit-locked official source with Go 1.26.6, and records both the binary hash
 and embedded Go build information. It also locks Buildx 0.36.1 and installs
 `jq` `1.8.1-4ubuntu2` as the fail-closed Dapper identity metadata parser. A
 checksum-locked Buildx patch removes its sole compiled dependency on the legacy
-Docker module.
-The host build client is installed as Buildx `v0.36.1` by the repository-owned
+Docker module and upgrades the compiled `github.com/moby/go-archive` and
+`golang.org/x/mod` modules to `v0.3.0` and `v0.40.0`.
+The host build client is built twice as Buildx `v0.36.1` by the repository-owned
 `scripts/install-locked-host-buildx` verifier. GitHub Actions gives the verified
-release binary an empty, caller-owned mode-`0700` run root under `$HOME`, then
-copies it into a separate run-owned `DOCKER_CONFIG` at
+source builder an empty, caller-owned mode-`0700` run root under `$HOME`, then
+copies the byte-identical result into a separate run-owned `DOCKER_CONFIG` at
 `cli-plugins/docker-buildx`. `DAPPER_BUILDX_COMMAND` remains bound to the
 installer-returned binary, while every Dapper builder uses BuildKit `v0.32.2` from
 `moby/buildkit:v0.32.2@sha256:28a898719c18a33f4e8000685287fa36fd0dd9560c6440227d3a732d79bb41d8`.
 These host-side locks are recorded in `toolchain/host-build-toolchain.lock` and
-the source SBOM. The lock also binds the official Linux amd64 Buildx release
-asset (`sha256:48af8a397ebd60178778bf63611dbcebe5f5e7a9be90eb9147b24b9587455778`)
-and `checksums.txt`
-(`sha256:abeea7a52865e60e1af4995d2449cdbaca762dc99689a829f15f0fd760766413`)
-to their exact HTTPS URLs. The Ubuntu 26.04 base image is digest-pinned, and
+the source SBOM. The lock binds the exact Buildx source archive
+(`sha256:fb28b5c2a198d05482f0656dfb7ee161240a904e36697bf7108e5d517f23854b`),
+vendor/security patch
+(`sha256:b615fea76706a4c16e2af354b3a92d7b8b0465dce4f2d2c20b7a87bdc3100ad2`),
+Go 1.26.6 archive
+(`sha256:708effb774be8237570d0add163225abbdfaf4fca28b2611df167beba4feef89`),
+and resulting Linux amd64 binary
+(`sha256:ebb6935c31ef883684ec1721be8cc7e5d0386e5a445e90b7e81c7c8f5dac991d`).
+As of 2026-08-20, upstream `v0.36.1` remains the latest signed Buildx release,
+but its official binary still records `go-archive v0.2.1` and `x/mod v0.38.0`;
+upstream has no signed release containing both fixed module versions. Both the
+Dapper and host plugins therefore use the same locked vendor upgrade instead
+of an OpenVEX exception. The Ubuntu 26.04 base image is digest-pinned, and
 all direct APT packages are locked to the official `20260808T000000Z` Ubuntu
 snapshot. Each image records its resolved `dpkg` inventory, and the build image
 records the installed GCC, Go, Docker, Buildx, and `jq` binaries. The source
@@ -132,7 +141,7 @@ failed load or identity gate—the newly created image reference; it never prune
 shared builder state.
 
 If a development packaging host does not already provide the locked Buildx,
-install the verified release binary only under an empty, caller-owned run root:
+build the verified source only under an empty, caller-owned run root:
 
 ```bash
 mkdir -m 0700 "$RUN_ROOT/locked-host-buildx"
@@ -140,8 +149,10 @@ export DAPPER_BUILDX_COMMAND="$(bash scripts/install-locked-host-buildx "$RUN_RO
 "$DAPPER_BUILDX_COMMAND" version
 ```
 
-The helper verifies the official checksum file, binary hash, version, and
-commit before returning the executable path. It refuses existing, symlinked,
+The helper verifies source, patch, and compiler hashes, builds twice with
+`GOPROXY=off` and the locked vendor tree, compares dependency lists and binary
+bytes, and checks the exact fixed module versions before returning the
+executable path. It refuses existing, symlinked,
 non-canonical, system, and global Docker plugin destinations. Every path
 ancestor must be owned by root or the caller; group- or world-writable
 ancestors must use the sticky bit. The helper binds subsequent operations to

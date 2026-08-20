@@ -42,9 +42,9 @@ the test suite never waits on production delays.
   uses Go 1.26.6, Docker CLI 29.7.2, and the checksum-patched Buildx 0.36.1
   source. Its identity resolver uses `jq` `1.8.1-4ubuntu2`, installed from the
   same dated Ubuntu snapshot and verified against the direct package lock.
-- The host Buildx client is `v0.36.1`, installed by the repository-owned
-  `scripts/install-locked-host-buildx` verifier into an empty, caller-owned
-  mode-`0700` run root below `$HOME`. CI copies the verified binary into a
+- The host Buildx client is `v0.36.1`, built twice by the repository-owned
+  `scripts/install-locked-host-buildx` verifier inside an empty, caller-owned
+  mode-`0700` run root below `$HOME`. CI copies the byte-identical binary into a
   separate run-owned `DOCKER_CONFIG` at `cli-plugins/docker-buildx`, verifies
   its hash, owner, mode, version, and commit, and binds
   `DAPPER_BUILDX_COMMAND` to the installer-returned binary. Dapper builders use
@@ -53,17 +53,27 @@ the test suite never waits on production delays.
   The source gate rejects mutable BuildKit fallbacks.
 - Development packaging may use `scripts/install-locked-host-buildx` only when
   the host plugin does not match the lock. The helper downloads the exact
-  official Linux amd64 asset and checksum file over HTTPS, verifies both
-  SHA-256 digests (`48af8a397ebd60178778bf63611dbcebe5f5e7a9be90eb9147b24b9587455778`
-  and `abeea7a52865e60e1af4995d2449cdbaca762dc99689a829f15f0fd760766413`),
-  then verifies Buildx `v0.36.1` and commit
-  `1d8dde89b8aba914e05e45366770736fea1fd690`. It writes only below an empty,
+  Buildx source (`sha256:fb28b5c2a198d05482f0656dfb7ee161240a904e36697bf7108e5d517f23854b`)
+  and Go 1.26.6 archive
+  (`sha256:708effb774be8237570d0add163225abbdfaf4fca28b2611df167beba4feef89`),
+  applies the repository patch
+  (`sha256:b615fea76706a4c16e2af354b3a92d7b8b0465dce4f2d2c20b7a87bdc3100ad2`),
+  and performs two vendor-only, `GOPROXY=off` builds. It requires identical
+  dependency lists and binaries, verifies result
+  `sha256:ebb6935c31ef883684ec1721be8cc7e5d0386e5a445e90b7e81c7c8f5dac991d`,
+  Buildx `v0.36.1`, commit `1d8dde89b8aba914e05e45366770736fea1fd690`,
+  `github.com/moby/go-archive v0.3.0`, and `golang.org/x/mod v0.40.0`. It writes
+  only below an empty,
   canonical, caller-owned run root whose ancestors are root- or caller-owned;
   any group- or world-writable ancestor must be sticky. Later operations stay
   bound to that validated directory identity. The helper never installs into a
   system directory or global Docker CLI plugin directory. Always-run cleanup
   revalidates the exact two run-root paths, identities, owners, and mode `0700`
-  before deleting only those directories.
+  before deleting only those directories. As of 2026-08-20, the latest signed
+  upstream Buildx release remains `v0.36.1`; its official binary contains
+  `go-archive v0.2.1` and `x/mod v0.38.0`, and no signed fixed release exists.
+  The same locked upgrade is therefore required for both host and Dapper
+  binaries; these CVEs must not be suppressed with OpenVEX.
 - Every Dapper export records its manifest digest separately. The Buildx IID
   must equal the top-level configuration digest when that metadata field is
   present; otherwise it must equal the manifest digest selected by Buildx's

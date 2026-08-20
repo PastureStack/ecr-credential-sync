@@ -1,17 +1,27 @@
-# Host-side Dapper build toolchain verified from official releases and the
-# Docker registry on 2026-08-16. Keep these values synchronized with CI,
-# source SBOM metadata, README.md, SECURITY.md, and the source gate.
+# Host-side Dapper build toolchain verified from official sources and the
+# Docker registry on 2026-08-20. Buildx v0.36.1 is the latest signed release,
+# but its official binary embeds vulnerable dependency versions. The host
+# plugin is therefore rebuilt twice from the exact release source with the
+# repository-locked offline vendor patch. Keep these values synchronized with
+# CI, source SBOM metadata, README.md, SECURITY.md, and the source gate.
 HOST_BUILDX_VERSION=v0.36.1
 HOST_BUILDX_COMMIT=1d8dde89b8aba914e05e45366770736fea1fd690
-HOST_BUILDX_ASSET_PLATFORM=linux-amd64
-HOST_BUILDX_ASSET_FILENAME=buildx-v0.36.1.linux-amd64
-HOST_BUILDX_ASSET_URL=https://github.com/docker/buildx/releases/download/v0.36.1/buildx-v0.36.1.linux-amd64
-HOST_BUILDX_ASSET_SHA256=48af8a397ebd60178778bf63611dbcebe5f5e7a9be90eb9147b24b9587455778
-HOST_BUILDX_CHECKSUMS_FILENAME=checksums.txt
-HOST_BUILDX_CHECKSUMS_URL=https://github.com/docker/buildx/releases/download/v0.36.1/checksums.txt
-HOST_BUILDX_CHECKSUMS_SHA256=abeea7a52865e60e1af4995d2449cdbaca762dc99689a829f15f0fd760766413
+HOST_BUILDX_SOURCE_DATE_EPOCH=1785856317
+HOST_BUILDX_SOURCE_FILENAME=buildx-1d8dde89b8aba914e05e45366770736fea1fd690.tar.gz
+HOST_BUILDX_SOURCE_URL=https://codeload.github.com/docker/buildx/tar.gz/1d8dde89b8aba914e05e45366770736fea1fd690
+HOST_BUILDX_SOURCE_SHA256=fb28b5c2a198d05482f0656dfb7ee161240a904e36697bf7108e5d517f23854b
+HOST_BUILDX_SECURITY_PATCH_PATH=toolchain/buildx-security.patch
+HOST_BUILDX_SECURITY_PATCH_SHA256=b615fea76706a4c16e2af354b3a92d7b8b0465dce4f2d2c20b7a87bdc3100ad2
+HOST_BUILDX_GO_VERSION=1.26.6
+HOST_BUILDX_GO_PLATFORM=linux-amd64
+HOST_BUILDX_GO_FILENAME=go1.26.6.linux-amd64.tar.gz
+HOST_BUILDX_GO_URL=https://go.dev/dl/go1.26.6.linux-amd64.tar.gz
+HOST_BUILDX_GO_SHA256=708effb774be8237570d0add163225abbdfaf4fca28b2611df167beba4feef89
+HOST_BUILDX_GO_ARCHIVE_VERSION=v0.3.0
+HOST_BUILDX_X_MOD_VERSION=v0.40.0
+HOST_BUILDX_BINARY_SHA256=ebb6935c31ef883684ec1721be8cc7e5d0386e5a445e90b7e81c7c8f5dac991d
 HOST_BUILDKIT_VERSION=v0.32.2
 HOST_BUILDKIT_IMAGE=moby/buildkit:v0.32.2@sha256:28a898719c18a33f4e8000685287fa36fd0dd9560c6440227d3a732d79bb41d8
-HOST_BUILDX_INSTALL_METHOD=repository-locked-release-installer
+HOST_BUILDX_INSTALL_METHOD=repository-locked-offline-source-builder
 HOST_BUILDX_INSTALLER_PATH=scripts/install-locked-host-buildx
 HOST_BUILDX_PLUGIN_RELATIVE_PATH=cli-plugins/docker-buildx

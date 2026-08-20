@@ -1,0 +1,62 @@
+#!/bin/bash
+set -euo pipefail
+
+fail() {
+  printf 'ECR_SYNC_BUILDX_MODULES_INVALID reason=%s\n' "$1" >&2
+  exit 1
+}
+
+if [ "$#" -ne 4 ]; then
+  printf 'usage: %s GO_VERSION_M_OUTPUT EXPECTED_COMPILER EXPECTED_GO_ARCHIVE_VERSION EXPECTED_X_MOD_VERSION\n' "$0" >&2
+  exit 64
+fi
+
+manifest=$1
+expected_compiler=$2
+expected_go_archive=$3
+expected_x_mod=$4
+
+[ -f "$manifest" ] || fail manifest-not-regular-file
+[ ! -L "$manifest" ] || fail manifest-is-symlink
+[ -s "$manifest" ] || fail manifest-empty
+[[ "$expected_compiler" =~ ^go[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail expected-compiler-malformed
+[[ "$expected_go_archive" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || \
+  fail expected-go-archive-version-malformed
+[[ "$expected_x_mod" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail expected-x-mod-version-malformed
+
+first_line=$(head -n 1 -- "$manifest") || fail compiler-readback-failed
+case "$first_line" in
+  *": ${expected_compiler}") ;;
+  *) fail compiler-mismatch ;;
+esac
+
+if ! awk -F '\t' \
+    -v expected_go_archive="$expected_go_archive" \
+    -v expected_x_mod="$expected_x_mod" '
+      NR == 1 { next }
+      $2 == "dep" && $3 == "github.com/moby/go-archive" {
+        go_archive_count++
+        if (NF != 5 || $1 != "" || $4 != expected_go_archive || $5 != "") {
+          invalid = 1
+        }
+      }
+      $2 == "dep" && $3 == "golang.org/x/mod" {
+        x_mod_count++
+        if (NF != 5 || $1 != "" || $4 != expected_x_mod || $5 != "") {
+          invalid = 1
+        }
+      }
+      $2 == "dep" && $3 == "github.com/docker/docker" {
+        invalid = 1
+      }
+      END {
+        if (invalid || go_archive_count != 1 || x_mod_count != 1) {
+          exit 1
+        }
+      }
+    ' "$manifest"; then
+  fail dependency-records-not-exact
+fi
+
+printf 'ECR_SYNC_BUILDX_MODULES_OK compiler=%s go_archive=%s x_mod=%s legacy_docker_module=absent\n' \
+  "$expected_compiler" "$expected_go_archive" "$expected_x_mod"

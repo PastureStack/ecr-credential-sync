@@ -28,6 +28,7 @@ ARG SOURCE_DATE_EPOCH
 
 COPY --from=snapshot-ca-bootstrap /snapshot-ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 COPY ubuntu-apt.lock /usr/share/pasturestack/manifests/ubuntu-apt.lock
+COPY --chmod=0555 scripts/check-buildx-module-versions /usr/local/libexec/pasturestack/check-buildx-module-versions
 COPY --chmod=0555 scripts/check-go-telemetry-state /usr/local/libexec/pasturestack/check-go-telemetry-state
 COPY toolchain/buildx-security.patch /usr/share/pasturestack/patches/buildx-security.patch
 
@@ -36,6 +37,7 @@ RUN set -eux; \
     test "${SOURCE_DATE_EPOCH}" -le "$(date -u +%s)"; \
     touch --no-dereference --date="@${SOURCE_DATE_EPOCH}" \
         /etc/ssl/certs/ca-certificates.crt \
+        /usr/local/libexec/pasturestack/check-buildx-module-versions \
         /usr/local/libexec/pasturestack/check-go-telemetry-state \
         /usr/share/pasturestack/manifests/ubuntu-apt.lock \
         /usr/share/pasturestack/patches/buildx-security.patch
@@ -52,7 +54,9 @@ ARG BUILDX_VERSION=0.36.1
 ARG BUILDX_GIT_COMMIT=1d8dde89b8aba914e05e45366770736fea1fd690
 ARG BUILDX_SOURCE_DATE_EPOCH=1785856317
 ARG BUILDX_SOURCE_SHA256=fb28b5c2a198d05482f0656dfb7ee161240a904e36697bf7108e5d517f23854b
-ARG BUILDX_SECURITY_PATCH_SHA256=9d424e752f24ea0e34ccd80340428f067ae8109204c401c93786a2b0be6ea993
+ARG BUILDX_SECURITY_PATCH_SHA256=b615fea76706a4c16e2af354b3a92d7b8b0465dce4f2d2c20b7a87bdc3100ad2
+ARG BUILDX_GO_ARCHIVE_VERSION=v0.3.0
+ARG BUILDX_X_MOD_VERSION=v0.40.0
 ARG UBUNTU_APT_SNAPSHOT=20260808T000000Z
 ARG GO_LINUX_AMD64_SHA256=708effb774be8237570d0add163225abbdfaf4fca28b2611df167beba4feef89
 ARG GO_LINUX_ARM64_SHA256=d0507e9e9d7fe012aae570108cbd76c15de879e17130ab8cb90d4d7445cb1f2e
@@ -197,7 +201,27 @@ RUN set -eux; \
     cd /tmp/buildx-src; \
     git apply --check /usr/share/pasturestack/patches/buildx-security.patch; \
     git apply /usr/share/pasturestack/patches/buildx-security.patch; \
-    GO111MODULE=on GOPROXY=off GOSUMDB=sum.golang.org go list -mod=vendor -deps ./cmd/buildx > /tmp/buildx-deps.txt; \
+    git apply --reverse --check /usr/share/pasturestack/patches/buildx-security.patch; \
+    git apply --numstat /usr/share/pasturestack/patches/buildx-security.patch \
+        | awk -F '\t' '$3 ~ /\.go$/ && $1 != "-" { print $3 }' \
+        > /tmp/buildx-patched-go-files.txt; \
+    test -s /tmp/buildx-patched-go-files.txt; \
+    while IFS= read -r buildx_patched_go_file; do \
+        case "${buildx_patched_go_file}" in /*|../*|*/../*|*/..) exit 1;; esac; \
+        buildx_patched_go_path="/tmp/buildx-src/${buildx_patched_go_file}"; \
+        if test -e "${buildx_patched_go_path}" || test -L "${buildx_patched_go_path}"; then \
+            test -f "${buildx_patched_go_path}"; \
+            test ! -L "${buildx_patched_go_path}"; \
+            test -z "$(gofmt -d -- "${buildx_patched_go_path}")"; \
+        fi; \
+    done < /tmp/buildx-patched-go-files.txt; \
+    test "$(grep -Fxc "$(printf '\tgithub.com/moby/go-archive %s' "${BUILDX_GO_ARCHIVE_VERSION}")" go.mod)" -eq 1; \
+    test "$(grep -Fxc "$(printf '\tgolang.org/x/mod %s' "${BUILDX_X_MOD_VERSION}")" go.mod)" -eq 1; \
+    grep -Fqx "# github.com/moby/go-archive ${BUILDX_GO_ARCHIVE_VERSION}" vendor/modules.txt; \
+    grep -Fqx "# golang.org/x/mod ${BUILDX_X_MOD_VERSION}" vendor/modules.txt; \
+    if grep -F 'github.com/moby/go-archive v0.2.1' go.mod vendor/modules.txt; then exit 1; fi; \
+    if grep -F 'golang.org/x/mod v0.38.0' go.mod vendor/modules.txt; then exit 1; fi; \
+    GO111MODULE=on GOTOOLCHAIN=local GOPROXY=off GOSUMDB=sum.golang.org go list -mod=vendor -buildvcs=false -deps ./cmd/buildx > /tmp/buildx-deps.txt; \
     if grep '^github.com/docker/docker/' /tmp/buildx-deps.txt; then \
         echo 'patched Buildx still compiles github.com/docker/docker' >&2; \
         exit 1; \
@@ -209,15 +233,14 @@ RUN set -eux; \
     chmod +x /usr/libexec/docker/cli-plugins/docker-buildx; \
     docker buildx version; \
     go version -m /usr/libexec/docker/cli-plugins/docker-buildx > /usr/share/pasturestack/manifests/buildx-go-version.txt; \
-    if grep -F $'dep\tgithub.com/docker/docker\t' /usr/share/pasturestack/manifests/buildx-go-version.txt; then \
-        echo 'patched Buildx binary still records github.com/docker/docker' >&2; \
-        exit 1; \
-    fi; \
+    bash /usr/local/libexec/pasturestack/check-buildx-module-versions \
+        /usr/share/pasturestack/manifests/buildx-go-version.txt \
+        "go${GO_VERSION}" "${BUILDX_GO_ARCHIVE_VERSION}" "${BUILDX_X_MOD_VERSION}"; \
     touch --no-dereference --date="@${SOURCE_DATE_EPOCH}" \
         /usr/libexec/docker/cli-plugins/docker-buildx \
         /usr/share/pasturestack/manifests/buildx-go-version.txt; \
     cd /; \
-    rm -rf /tmp/buildx-src /tmp/buildx.tar.gz /tmp/buildx-deps.txt /tmp/go-build-cache; \
+    rm -rf /tmp/buildx-src /tmp/buildx.tar.gz /tmp/buildx-deps.txt /tmp/buildx-patched-go-files.txt /tmp/go-build-cache; \
     bash /usr/local/libexec/pasturestack/check-go-telemetry-state /tmp/go-config/go/telemetry "${SOURCE_DATE_EPOCH}" /usr/local/go/bin/go
 
 RUN set -eux; \
