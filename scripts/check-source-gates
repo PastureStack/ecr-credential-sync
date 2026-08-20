@@ -56,6 +56,8 @@ require_marker Dockerfile.dapper 'ARG BUILDX_GIT_COMMIT=1d8dde89b8aba914e05e4536
 require_marker Dockerfile.dapper 'ARG BUILDX_SOURCE_DATE_EPOCH=1785856317' ECR_SYNC_BUILDX_EPOCH_MISSING
 require_marker Dockerfile.dapper 'ARG BUILDX_SOURCE_SHA256=fb28b5c2a198d05482f0656dfb7ee161240a904e36697bf7108e5d517f23854b' ECR_SYNC_BUILDX_SOURCE_SHA_MISSING
 require_marker Dockerfile.dapper 'ARG BUILDX_SECURITY_PATCH_SHA256=9d424e752f24ea0e34ccd80340428f067ae8109204c401c93786a2b0be6ea993' ECR_SYNC_BUILDX_PATCH_SHA_MISSING
+require_marker Dockerfile.dapper '-X github.com/docker/buildx/version.Version=v${BUILDX_VERSION}' ECR_SYNC_BUILDX_EXECUTABLE_VERSION_PRODUCER_MISSING
+reject_marker Dockerfile.dapper '-X github.com/docker/buildx/version.Version=${BUILDX_VERSION}' ECR_SYNC_BUILDX_EXECUTABLE_VERSION_PRODUCER_NONCANONICAL
 require_marker Dockerfile.dapper 'ARG UBUNTU_APT_SNAPSHOT=20260808T000000Z' ECR_SYNC_APT_SNAPSHOT_NOT_PINNED
 require_marker Dockerfile.dapper 'ubuntu:26.04@sha256:678c6550cc43645e08669028bc177f50be4e7c5b8cca677067b1914d4afc7a03' ECR_SYNC_UBUNTU_DIGEST_NOT_CURRENT
 require_marker Dockerfile.dapper 'dapper-ubuntu-packages.tsv' ECR_SYNC_DAPPER_DPKG_MANIFEST_MISSING
@@ -195,6 +197,7 @@ require_marker scripts/build-runtime-image 'builder_container="buildx_buildkit_$
 require_marker scripts/build-runtime-image 'builder_volume="${builder_container}_state"' ECR_SYNC_RUNTIME_BUILDER_VOLUME_IDENTITY_MISSING
 require_marker scripts/build-runtime-image '"$docker_path" buildx rm --force "$builder"' ECR_SYNC_RUNTIME_EXACT_BUILDER_CLEANUP_MISSING
 require_marker scripts/test-runtime-image-export-load 'builder-create-failure' ECR_SYNC_RUNTIME_BUILDER_OWNERSHIP_REGRESSION_MISSING
+require_marker scripts/test-runtime-image-export-load 'buildx-version-without-v' ECR_SYNC_RUNTIME_BUILDX_VERSION_PREFIX_REGRESSION_MISSING
 require_marker scripts/build-runtime-image 'archive-hash-readback-failed' ECR_SYNC_RUNTIME_ARCHIVE_HASH_READBACK_MISSING
 require_marker scripts/build-runtime-image 'bash "$resolver"' ECR_SYNC_RUNTIME_IMAGE_IDENTITY_GATE_MISSING
 require_marker scripts/build-runtime-image 'ECR_SYNC_RUNTIME_BUILDX_BUILD_NATIVE_EXIT=' ECR_SYNC_RUNTIME_BUILDX_NATIVE_EXIT_MISSING
@@ -609,5 +612,5 @@ if [ "$failure_count" -ne 0 ]; then
   exit 1
 fi
 
-printf 'ECR_SYNC_SOURCE_GATES_OK go=1.26.6 docker=29.7.2 docker_cli_source_built=go1.26.6 buildx=0.36.1 jq=1.8.1 jq_package=1.8.1-4ubuntu2 host_buildx=0.36.1 host_buildx_binary=sha256:48af8a397ebd60178778bf63611dbcebe5f5e7a9be90eb9147b24b9587455778 host_buildkit=0.32.2 buildkit_version_readback=exact-single-record dapper_identity=buildx-iid+metadata-config+daemon-config-or-manifest ubuntu=26.04 snapshot=20260808T000000Z non_root=1 legal_files=%s endpoint_override=bounded brand_gate=tracked_source_only runtime_manifest_access=default-user-read-only buildx_legacy_module_removed=1 runtime_mtime_normalization=all_local_copy_inputs dapper_reproducibility=buildkit-rewrite-timestamp runtime_export=docker-archive-explicit-load runtime_builder=exact-run-owned-pinned sbom_trivy_gate=1\n' \
+printf 'ECR_SYNC_SOURCE_GATES_OK go=1.26.6 docker=29.7.2 docker_cli_source_built=go1.26.6 buildx=0.36.1 dapper_buildx_executable_version=v0.36.1 jq=1.8.1 jq_package=1.8.1-4ubuntu2 host_buildx=0.36.1 host_buildx_binary=sha256:48af8a397ebd60178778bf63611dbcebe5f5e7a9be90eb9147b24b9587455778 host_buildkit=0.32.2 buildkit_version_readback=exact-single-record dapper_identity=buildx-iid+metadata-config+daemon-config-or-manifest ubuntu=26.04 snapshot=20260808T000000Z non_root=1 legal_files=%s endpoint_override=bounded brand_gate=tracked_source_only runtime_manifest_access=default-user-read-only buildx_legacy_module_removed=1 runtime_mtime_normalization=all_local_copy_inputs dapper_reproducibility=buildkit-rewrite-timestamp runtime_export=docker-archive-explicit-load runtime_builder=exact-run-owned-pinned sbom_trivy_gate=1\n' \
   "$legal_count"
