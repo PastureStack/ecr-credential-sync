@@ -10,6 +10,13 @@ from pathlib import Path
 import uuid
 
 
+DAPPER_GO_VERSION = "1.26.6"
+DAPPER_GO_TELEMETRY_MODE = "off"
+DAPPER_GO_TELEMETRY_DIRECTORY = "/tmp/go-config/go/telemetry"
+DAPPER_GO_TELEMETRY_MODE_DATE_SOURCE = "SOURCE_DATE_EPOCH-UTC"
+DAPPER_GO_TELEMETRY_MODE_FORMAT = "off YYYY-MM-DD"
+
+
 HOST_TOOLCHAIN_KEYS = (
     "HOST_BUILDX_VERSION",
     "HOST_BUILDX_COMMIT",
@@ -135,7 +142,11 @@ def main() -> int:
     serial = uuid.uuid5(
         uuid.NAMESPACE_URL,
         "pasturestack:ecr-credential-sync:"
-        f"{lock_digest}:{host_toolchain_digest}:{ubuntu_apt_digest}",
+        f"{lock_digest}:{host_toolchain_digest}:{ubuntu_apt_digest}:"
+        f"{DAPPER_GO_VERSION}:{DAPPER_GO_TELEMETRY_MODE}:"
+        f"{DAPPER_GO_TELEMETRY_DIRECTORY}:"
+        f"{DAPPER_GO_TELEMETRY_MODE_DATE_SOURCE}:"
+        f"{DAPPER_GO_TELEMETRY_MODE_FORMAT}",
     )
 
     components = []
@@ -186,6 +197,26 @@ def main() -> int:
                 {
                     "name": "pasturestack:dapper-jq-version",
                     "value": ubuntu_apt["UBUNTU_APT_JQ_VERSION"],
+                },
+                {
+                    "name": "pasturestack:dapper-go-version",
+                    "value": DAPPER_GO_VERSION,
+                },
+                {
+                    "name": "pasturestack:dapper-go-telemetry-mode",
+                    "value": DAPPER_GO_TELEMETRY_MODE,
+                },
+                {
+                    "name": "pasturestack:dapper-go-telemetry-directory",
+                    "value": DAPPER_GO_TELEMETRY_DIRECTORY,
+                },
+                {
+                    "name": "pasturestack:dapper-go-telemetry-mode-date-source",
+                    "value": DAPPER_GO_TELEMETRY_MODE_DATE_SOURCE,
+                },
+                {
+                    "name": "pasturestack:dapper-go-telemetry-mode-format",
+                    "value": DAPPER_GO_TELEMETRY_MODE_FORMAT,
                 },
                 {
                     "name": "pasturestack:runtime-image-export",

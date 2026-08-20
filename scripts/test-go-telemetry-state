@@ -1,0 +1,138 @@
+#!/bin/bash
+set -euo pipefail
+
+repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
+checker=${repo_root}/scripts/check-go-telemetry-state
+fixture_root=$(mktemp -d)
+case "$fixture_root" in
+  /tmp/*|/var/tmp/*) ;;
+  *) exit 1 ;;
+esac
+trap 'rm -rf -- "$fixture_root"' EXIT
+
+source_date_epoch=946684800
+expected_date=2000-01-01
+config_root=${fixture_root}/go-config
+telemetry_root=${config_root}/go/telemetry
+fake_go=${fixture_root}/go
+
+cat > "$fake_go" <<'EOF'
+#!/bin/bash
+set -euo pipefail
+
+if [ "${FIXTURE_GO_WRITES_COUNT:-0}" = 1 ]; then
+  mkdir -p "$FIXTURE_TELEMETRY_ROOT/local"
+  printf 'nondeterministic counter fixture\n' > "$FIXTURE_TELEMETRY_ROOT/local/go-fixture.count"
+fi
+
+case "$*" in
+  'env GOTELEMETRY') printf '%s\n' "${FIXTURE_GOTELEMETRY:-off}" ;;
+  'env GOTELEMETRYDIR') printf '%s\n' "${FIXTURE_GOTELEMETRYDIR:-$FIXTURE_TELEMETRY_ROOT}" ;;
+  *) exit 64 ;;
+esac
+EOF
+chmod 0755 "$fake_go"
+
+prepare_valid_fixture() {
+  rm -rf -- "$config_root"
+  mkdir -p "$telemetry_root"
+  chmod 0755 "$config_root" "$config_root/go" "$telemetry_root"
+  printf 'off %s' "$expected_date" > "$telemetry_root/mode"
+  chmod 0644 "$telemetry_root/mode"
+  touch --date="@${source_date_epoch}" \
+    "$config_root" "$config_root/go" "$telemetry_root" "$telemetry_root/mode"
+  unset FIXTURE_GOTELEMETRY FIXTURE_GOTELEMETRYDIR FIXTURE_GO_WRITES_COUNT
+}
+
+run_checker() {
+  env \
+    FIXTURE_TELEMETRY_ROOT="$telemetry_root" \
+    FIXTURE_GOTELEMETRY="${FIXTURE_GOTELEMETRY:-}" \
+    FIXTURE_GOTELEMETRYDIR="${FIXTURE_GOTELEMETRYDIR:-}" \
+    FIXTURE_GO_WRITES_COUNT="${FIXTURE_GO_WRITES_COUNT:-0}" \
+    bash "$checker" "$telemetry_root" "$source_date_epoch" "$fake_go"
+}
+
+expect_failure() {
+  local name=$1
+  local reason=$2
+  local stdout=${fixture_root}/${name}.stdout
+  local stderr=${fixture_root}/${name}.stderr
+
+  if run_checker > "$stdout" 2> "$stderr"; then
+    printf 'expected Go telemetry fixture to fail: %s\n' "$name" >&2
+    exit 1
+  fi
+  grep -Fx "ECR_SYNC_GO_TELEMETRY_STATE_INVALID reason=${reason}" "$stderr" >/dev/null
+}
+
+prepare_valid_fixture
+run_checker > "$fixture_root/positive.stdout"
+fixture_owner=$(stat -Lc '%u:%g' -- "$telemetry_root")
+mode_sha256=$(sha256sum "$telemetry_root/mode")
+mode_sha256=${mode_sha256%% *}
+grep -Fx \
+  "ECR_SYNC_GO_TELEMETRY_STATE_OK mode=off date=${expected_date} dir=${telemetry_root} metadata_epoch=${source_date_epoch} owner=${fixture_owner} directory_mode=755 mode_mode=644 mode_sha256=${mode_sha256} counters=absent" \
+  "$fixture_root/positive.stdout" >/dev/null
+
+prepare_valid_fixture
+rm -f -- "$telemetry_root/mode"
+export FIXTURE_GOTELEMETRY=off
+expect_failure env-only-control mode-file-invalid
+
+prepare_valid_fixture
+printf 'off %s\n' "$expected_date" > "$telemetry_root/mode"
+touch --date="@${source_date_epoch}" "$telemetry_root/mode"
+expect_failure mode-non-exact mode-content-noncanonical
+
+prepare_valid_fixture
+mkdir "$telemetry_root/local"
+expect_failure local-state local-state-present
+
+prepare_valid_fixture
+mkdir "$telemetry_root/upload"
+expect_failure upload-state upload-state-present
+
+prepare_valid_fixture
+mkdir "$telemetry_root/debug"
+expect_failure debug-state debug-state-present
+
+prepare_valid_fixture
+mkdir "$telemetry_root/counter"
+expect_failure counter-state counter-state-present
+
+prepare_valid_fixture
+mkdir -p "$telemetry_root/local"
+printf '4\n' > "$telemetry_root/local/weekends"
+expect_failure weekends-state weekends-state-present
+
+prepare_valid_fixture
+printf 'counter fixture\n' > "$telemetry_root/rogue.count"
+expect_failure count-file-state count-file-present
+
+prepare_valid_fixture
+mkdir "$telemetry_root/rogue.count"
+expect_failure count-non-file-state count-file-present
+
+prepare_valid_fixture
+printf 'unexpected state\n' > "$telemetry_root/unknown"
+expect_failure unknown-state unexpected-telemetry-state-present
+
+prepare_valid_fixture
+wrong_epoch=$((source_date_epoch + 1))
+touch --date="@${wrong_epoch}" "$telemetry_root/mode"
+expect_failure mode-mtime mode-metadata-noncanonical
+
+prepare_valid_fixture
+export FIXTURE_GOTELEMETRY=local
+expect_failure go-env-mode go-env-telemetry-mismatch
+
+prepare_valid_fixture
+export FIXTURE_GOTELEMETRYDIR=${fixture_root}/unexpected/go/telemetry
+expect_failure go-env-directory go-env-telemetry-dir-mismatch
+
+prepare_valid_fixture
+export FIXTURE_GO_WRITES_COUNT=1
+expect_failure go-command-counter-write count-file-present
+
+printf 'ECR_SYNC_GO_TELEMETRY_FIXTURES_OK positive=1 negative=14 mode=off-source-date-epoch-utc counters=absent\n'

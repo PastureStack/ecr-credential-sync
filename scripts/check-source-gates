@@ -26,6 +26,45 @@ reject_marker() {
   fi
 }
 
+go_telemetry_dockerfile_contract() {
+  local dockerfile=$1
+  local first_go_version_line
+  local go_telemetry_mode_count
+  local go_telemetry_mode_line
+  local go_telemetry_off_count
+  local go_telemetry_off_line
+  local go_telemetry_readback_count
+
+  [ -f "$dockerfile" ] || return 1
+  if grep -F -- 'GOTELEMETRY=off' "$dockerfile" >/dev/null; then
+    return 1
+  fi
+  [ "$(grep -Fc -- 'XDG_CONFIG_HOME=/tmp/go-config' "$dockerfile" || true)" -eq 1 ] || return 1
+  [ "$(grep -Fc -- 'telemetry_root=/tmp/go-config/go/telemetry' "$dockerfile" || true)" -eq 2 ] || return 1
+  [ "$(grep -Fc -- 'date -u --date="@${SOURCE_DATE_EPOCH}"' "$dockerfile" || true)" -eq 2 ] || return 1
+
+  go_telemetry_readback_count=$(grep -Fc -- \
+    'bash /usr/local/libexec/pasturestack/check-go-telemetry-state' "$dockerfile" || true)
+  [ "$go_telemetry_readback_count" -eq 5 ] || return 1
+  go_telemetry_off_count=$(grep -Fc -- '/usr/local/go/bin/go telemetry off' "$dockerfile" || true)
+  go_telemetry_mode_count=$(grep -Fc -- \
+    "printf 'off %s' \"\${telemetry_mode_date}\" > \"\${telemetry_root}/mode\"" \
+    "$dockerfile" || true)
+  [ "$go_telemetry_off_count" -eq 1 ] || return 1
+  [ "$go_telemetry_mode_count" -eq 1 ] || return 1
+
+  go_telemetry_off_line=$(grep -nF -- '/usr/local/go/bin/go telemetry off' "$dockerfile" | head -n 1 | cut -d: -f1)
+  go_telemetry_mode_line=$(grep -nF -- \
+    "printf 'off %s' \"\${telemetry_mode_date}\" > \"\${telemetry_root}/mode\"" \
+    "$dockerfile" | head -n 1 | cut -d: -f1)
+  first_go_version_line=$(grep -nF -- '    go version;' "$dockerfile" | head -n 1 | cut -d: -f1)
+  [ -n "$go_telemetry_off_line" ] || return 1
+  [ -n "$go_telemetry_mode_line" ] || return 1
+  [ -n "$first_go_version_line" ] || return 1
+  [ "$go_telemetry_off_line" -lt "$go_telemetry_mode_line" ] || return 1
+  [ "$go_telemetry_mode_line" -lt "$first_go_version_line" ] || return 1
+}
+
 brand_source_has_forbidden_reference() {
   local source_root=$1
 
@@ -45,6 +84,30 @@ brand_source_has_forbidden_reference() {
 require_marker Dockerfile.dapper 'ARG GO_VERSION=1.26.6' ECR_SYNC_GO_VERSION_NOT_CURRENT
 require_marker Dockerfile.dapper 'ARG GO_LINUX_AMD64_SHA256=708effb774be8237570d0add163225abbdfaf4fca28b2611df167beba4feef89' ECR_SYNC_GO_AMD64_SHA_MISSING
 require_marker Dockerfile.dapper 'ARG GO_LINUX_ARM64_SHA256=d0507e9e9d7fe012aae570108cbd76c15de879e17130ab8cb90d4d7445cb1f2e' ECR_SYNC_GO_ARM64_SHA_MISSING
+require_marker Dockerfile.dapper 'XDG_CONFIG_HOME=/tmp/go-config' ECR_SYNC_GO_TELEMETRY_CONFIG_ROOT_MISSING
+require_marker Dockerfile.dapper 'telemetry_root=/tmp/go-config/go/telemetry' ECR_SYNC_GO_TELEMETRY_ROOT_MISSING
+require_marker Dockerfile.dapper '/usr/local/go/bin/go telemetry off' ECR_SYNC_GO_TELEMETRY_OFF_COMMAND_MISSING
+require_marker Dockerfile.dapper 'date -u --date="@${SOURCE_DATE_EPOCH}"' ECR_SYNC_GO_TELEMETRY_MODE_DATE_NOT_REPRODUCIBLE
+require_marker Dockerfile.dapper 'go-telemetry-mode.txt' ECR_SYNC_GO_TELEMETRY_MODE_EVIDENCE_MISSING
+require_marker Dockerfile.dapper 'go-telemetry-state.tsv' ECR_SYNC_GO_TELEMETRY_STATE_EVIDENCE_MISSING
+require_marker Dockerfile.dapper 'pasturestack.go-telemetry-state/v1' ECR_SYNC_GO_TELEMETRY_STATE_SCHEMA_MISSING
+require_marker Dockerfile.dapper 'COPY --chmod=0555 scripts/check-go-telemetry-state' ECR_SYNC_GO_TELEMETRY_CHECKER_MODE_MISSING
+require_marker Dockerfile.dapper 'bash /usr/local/libexec/pasturestack/check-go-telemetry-state' ECR_SYNC_GO_TELEMETRY_READBACK_MISSING
+require_marker .dockerignore '!scripts/check-go-telemetry-state' ECR_SYNC_GO_TELEMETRY_CHECKER_EXCLUDED_FROM_CONTEXT
+require_marker scripts/check-go-telemetry-state 'mode-content-noncanonical' ECR_SYNC_GO_TELEMETRY_EXACT_MODE_GATE_MISSING
+require_marker scripts/check-go-telemetry-state 'go-env-telemetry-mismatch' ECR_SYNC_GO_TELEMETRY_DERIVED_MODE_GATE_MISSING
+require_marker scripts/check-go-telemetry-state 'go-env-telemetry-dir-mismatch' ECR_SYNC_GO_TELEMETRY_DERIVED_DIR_GATE_MISSING
+require_marker scripts/check-go-telemetry-state 'mode_sha256=%s' ECR_SYNC_GO_TELEMETRY_MODE_HASH_EVIDENCE_MISSING
+require_marker scripts/check-go-telemetry-state "-name '*.count' -print -quit" ECR_SYNC_GO_TELEMETRY_COUNT_FILE_GATE_MISSING
+require_marker scripts/check-go-telemetry-state 'unexpected-telemetry-state-present' ECR_SYNC_GO_TELEMETRY_EXACT_ROOT_GATE_MISSING
+require_marker scripts/check-go-telemetry-state 'weekends-state-present' ECR_SYNC_GO_TELEMETRY_WEEKENDS_GATE_MISSING
+require_marker scripts/test-go-telemetry-state 'env-only-control' ECR_SYNC_GO_TELEMETRY_ENV_ONLY_REGRESSION_MISSING
+require_marker scripts/test-go-telemetry-state 'mode-non-exact' ECR_SYNC_GO_TELEMETRY_MODE_REGRESSION_MISSING
+require_marker scripts/test-go-telemetry-state 'go-command-counter-write' ECR_SYNC_GO_TELEMETRY_COUNTER_REGRESSION_MISSING
+require_marker scripts/test-go-telemetry-state 'count-non-file-state' ECR_SYNC_GO_TELEMETRY_COUNT_REPRESENTATION_REGRESSION_MISSING
+require_marker scripts/check-source-gates 'env-only-control.Dockerfile' ECR_SYNC_GO_TELEMETRY_SOURCE_REGRESSION_MISSING
+require_marker .github/workflows/supply-chain.yml '            scripts/check-go-telemetry-state \' ECR_SYNC_GO_TELEMETRY_CHECKER_SOURCE_INPUT_MISSING
+require_marker .github/workflows/supply-chain.yml '            scripts/test-go-telemetry-state \' ECR_SYNC_GO_TELEMETRY_FIXTURE_SOURCE_INPUT_MISSING
 require_marker Dockerfile.dapper 'ARG DOCKER_VERSION=29.7.2' ECR_SYNC_DOCKER_VERSION_NOT_CURRENT
 require_marker Dockerfile.dapper 'ARG DOCKER_GIT_COMMIT=a7dcaa6fdb6ed04aacbfdc76357fdae01605609e' ECR_SYNC_DOCKER_SOURCE_COMMIT_MISSING
 require_marker Dockerfile.dapper 'ARG DOCKER_SOURCE_DATE_EPOCH=1785922455' ECR_SYNC_DOCKER_SOURCE_EPOCH_MISSING
@@ -227,7 +290,33 @@ require_marker main.go 'defaultCredentialEmail = "not-required@invalid"' ECR_SYN
 require_marker internal/platformapi/client.go 'endpoint := service.client.baseURL + "/registryCredentials/" + url.PathEscape(existing.ID)' ECR_SYNC_UNTRUSTED_SELF_LINK_NOT_IGNORED
 require_marker README.md 'ghcr.io/pasturestack/ecr-credential-sync:v3.1.0' ECR_SYNC_README_VERSION_TAG_MISSING
 
+if ! go_telemetry_dockerfile_contract Dockerfile.dapper; then
+  printf 'ECR_SYNC_GO_TELEMETRY_DOCKERFILE_CONTRACT_INVALID\n' >&2
+  failure_count=$((failure_count + 1))
+fi
+
+if ! (
+  set -euo pipefail
+  source_fixture_root=$(mktemp -d)
+  case "$source_fixture_root" in
+    /tmp/*|/var/tmp/*) ;;
+    *) exit 1 ;;
+  esac
+  trap 'rm -rf -- "$source_fixture_root"' EXIT
+  source_fixture="$source_fixture_root/env-only-control.Dockerfile"
+  cp Dockerfile.dapper "$source_fixture"
+  go_telemetry_dockerfile_contract "$source_fixture"
+  printf '\nENV GOTELEMETRY=off\n' >> "$source_fixture"
+  if go_telemetry_dockerfile_contract "$source_fixture"; then
+    exit 1
+  fi
+); then
+  printf 'ECR_SYNC_GO_TELEMETRY_SOURCE_FIXTURE_INVALID\n' >&2
+  failure_count=$((failure_count + 1))
+fi
+
 if ! bash -n scripts/build scripts/build-runtime-image scripts/check-source-gates scripts/ci scripts/entry \
+  scripts/check-go-telemetry-state scripts/test-go-telemetry-state \
   scripts/install-locked-host-buildx scripts/normalize-runtime-context-mtimes \
   scripts/package scripts/parse-buildx-buildkit-version scripts/release \
   scripts/resolve-dapper-image-identity scripts/test \
@@ -241,6 +330,11 @@ fi
 
 if ! bash scripts/test-buildx-buildkit-version; then
   printf 'ECR_SYNC_BUILDKIT_VERSION_FIXTURES_INVALID\n' >&2
+  failure_count=$((failure_count + 1))
+fi
+
+if ! bash scripts/test-go-telemetry-state; then
+  printf 'ECR_SYNC_GO_TELEMETRY_FIXTURES_INVALID\n' >&2
   failure_count=$((failure_count + 1))
 fi
 
@@ -469,6 +563,13 @@ require_marker scripts/generate-source-sbom.py 'pasturestack:host-buildx-plugin-
 require_marker scripts/generate-source-sbom.py 'pasturestack:ubuntu-apt-lock-sha256' ECR_SYNC_SOURCE_SBOM_APT_LOCK_MISSING
 require_marker scripts/generate-source-sbom.py 'pasturestack:ubuntu-apt-snapshot' ECR_SYNC_SOURCE_SBOM_APT_SNAPSHOT_MISSING
 require_marker scripts/generate-source-sbom.py 'pasturestack:dapper-jq-version' ECR_SYNC_SOURCE_SBOM_JQ_VERSION_MISSING
+require_marker scripts/generate-source-sbom.py 'pasturestack:dapper-go-version' ECR_SYNC_SOURCE_SBOM_GO_VERSION_MISSING
+require_marker scripts/generate-source-sbom.py 'pasturestack:dapper-go-telemetry-mode' ECR_SYNC_SOURCE_SBOM_GO_TELEMETRY_MODE_MISSING
+require_marker scripts/generate-source-sbom.py 'pasturestack:dapper-go-telemetry-directory' ECR_SYNC_SOURCE_SBOM_GO_TELEMETRY_DIR_MISSING
+require_marker scripts/generate-source-sbom.py 'pasturestack:dapper-go-telemetry-mode-date-source' ECR_SYNC_SOURCE_SBOM_GO_TELEMETRY_DATE_SOURCE_MISSING
+require_marker .github/workflows/supply-chain.yml 'select(.name == "pasturestack:dapper-go-telemetry-mode")' ECR_SYNC_SOURCE_SBOM_GO_TELEMETRY_MODE_GATE_MISSING
+require_marker .github/workflows/supply-chain.yml 'select(.name == "pasturestack:dapper-go-telemetry-directory")' ECR_SYNC_SOURCE_SBOM_GO_TELEMETRY_DIR_GATE_MISSING
+require_marker .github/workflows/supply-chain.yml 'select(.name == "pasturestack:dapper-go-telemetry-mode-date-source")' ECR_SYNC_SOURCE_SBOM_GO_TELEMETRY_DATE_SOURCE_GATE_MISSING
 require_marker scripts/generate-source-sbom.py 'pasturestack:runtime-image-export' ECR_SYNC_SOURCE_SBOM_RUNTIME_EXPORT_CONTRACT_MISSING
 require_marker README.md 'moby/buildkit:v0.32.2@sha256:28a898719c18a33f4e8000685287fa36fd0dd9560c6440227d3a732d79bb41d8' ECR_SYNC_HOST_BUILDKIT_DOC_MISSING
 require_marker README.md 'scripts/install-locked-host-buildx' ECR_SYNC_LOCKED_HOST_BUILDX_DOC_MISSING
@@ -477,11 +578,13 @@ require_marker README.md '48af8a397ebd60178778bf63611dbcebe5f5e7a9be90eb9147b24b
 require_marker README.md 'abeea7a52865e60e1af4995d2449cdbaca762dc99689a829f15f0fd760766413' ECR_SYNC_LOCKED_HOST_BUILDX_CHECKSUMS_README_DIGEST_MISSING
 require_marker README.md '`jq` `1.8.1-4ubuntu2`' ECR_SYNC_DAPPER_JQ_README_VERSION_MISSING
 require_marker README.md 'CreateNew Docker archive' ECR_SYNC_RUNTIME_EXPORT_README_CONTRACT_MISSING
+require_marker README.md '`go telemetry off`' ECR_SYNC_GO_TELEMETRY_README_CONTRACT_MISSING
 require_marker SECURITY.md 'Buildx IID' ECR_SYNC_DAPPER_IDENTITY_SECURITY_DOC_MISSING
 require_marker SECURITY.md '48af8a397ebd60178778bf63611dbcebe5f5e7a9be90eb9147b24b9587455778' ECR_SYNC_LOCKED_HOST_BUILDX_SECURITY_DIGEST_MISSING
 require_marker SECURITY.md 'abeea7a52865e60e1af4995d2449cdbaca762dc99689a829f15f0fd760766413' ECR_SYNC_LOCKED_HOST_BUILDX_CHECKSUMS_SECURITY_DIGEST_MISSING
 require_marker SECURITY.md '`jq` `1.8.1-4ubuntu2`' ECR_SYNC_DAPPER_JQ_SECURITY_VERSION_MISSING
 require_marker SECURITY.md 'archive hash' ECR_SYNC_RUNTIME_EXPORT_SECURITY_CONTRACT_MISSING
+require_marker SECURITY.md '`off YYYY-MM-DD`' ECR_SYNC_GO_TELEMETRY_SECURITY_CONTRACT_MISSING
 require_marker security/openvex.json '"status": "fixed"' ECR_SYNC_SOURCE_VEX_FIXED_STATUS_MISSING
 require_marker security/openvex.json '"status": "not_affected"' ECR_SYNC_SOURCE_VEX_NOT_AFFECTED_STATUS_MISSING
 require_marker security/openvex.json '"justification": "vulnerable_code_not_present"' ECR_SYNC_SOURCE_VEX_JUSTIFICATION_MISSING
@@ -612,5 +715,5 @@ if [ "$failure_count" -ne 0 ]; then
   exit 1
 fi
 
-printf 'ECR_SYNC_SOURCE_GATES_OK go=1.26.6 docker=29.7.2 docker_cli_source_built=go1.26.6 buildx=0.36.1 dapper_buildx_executable_version=v0.36.1 jq=1.8.1 jq_package=1.8.1-4ubuntu2 host_buildx=0.36.1 host_buildx_binary=sha256:48af8a397ebd60178778bf63611dbcebe5f5e7a9be90eb9147b24b9587455778 host_buildkit=0.32.2 buildkit_version_readback=exact-single-record dapper_identity=buildx-iid+metadata-config+daemon-config-or-manifest ubuntu=26.04 snapshot=20260808T000000Z non_root=1 legal_files=%s endpoint_override=bounded brand_gate=tracked_source_only runtime_manifest_access=default-user-read-only buildx_legacy_module_removed=1 runtime_mtime_normalization=all_local_copy_inputs dapper_reproducibility=buildkit-rewrite-timestamp runtime_export=docker-archive-explicit-load runtime_builder=exact-run-owned-pinned sbom_trivy_gate=1\n' \
+printf 'ECR_SYNC_SOURCE_GATES_OK go=1.26.6 go_telemetry=off-source-date-epoch-utc go_telemetry_readbacks=5 docker=29.7.2 docker_cli_source_built=go1.26.6 buildx=0.36.1 dapper_buildx_executable_version=v0.36.1 jq=1.8.1 jq_package=1.8.1-4ubuntu2 host_buildx=0.36.1 host_buildx_binary=sha256:48af8a397ebd60178778bf63611dbcebe5f5e7a9be90eb9147b24b9587455778 host_buildkit=0.32.2 buildkit_version_readback=exact-single-record dapper_identity=buildx-iid+metadata-config+daemon-config-or-manifest ubuntu=26.04 snapshot=20260808T000000Z non_root=1 legal_files=%s endpoint_override=bounded brand_gate=tracked_source_only runtime_manifest_access=default-user-read-only buildx_legacy_module_removed=1 runtime_mtime_normalization=all_local_copy_inputs dapper_reproducibility=buildkit-rewrite-timestamp runtime_export=docker-archive-explicit-load runtime_builder=exact-run-owned-pinned sbom_trivy_gate=1\n' \
   "$legal_count"

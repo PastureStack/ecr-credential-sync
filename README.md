@@ -108,6 +108,15 @@ records the installed GCC, Go, Docker, Buildx, and `jq` binaries. The source
 SBOM records the Ubuntu APT lock digest, snapshot, and exact Dapper `jq` version;
 the Dapper image SBOM independently inventories the installed package.
 
+Before any ordinary Go command runs, the Dapper build invokes the official
+`go telemetry off` control and rewrites its dated mode file to the exact
+`off YYYY-MM-DD` form using the UTC date derived from `SOURCE_DATE_EPOCH`.
+It does not rely on a `GOTELEMETRY` environment variable. A shared fail-closed
+readback checks the derived `GOTELEMETRY` and `GOTELEMETRYDIR` values, canonical
+mode and parent metadata, and absence of local, upload, debug, weekends, and
+counter state after every Go-running layer. The final mode and state manifests
+are compared across both Dapper builds and described by the source SBOM.
+
 Runtime packaging uses an isolated, run-owned `docker-container` builder with
 that same pinned BuildKit image. It keeps `rewrite-timestamp=true` and
 `compatibility-version=20`, exports to a CreateNew Docker archive, records and

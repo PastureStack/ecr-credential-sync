@@ -163,6 +163,7 @@ jobs:
             toolchain/host-build-toolchain.lock \
             scripts/build \
             scripts/build-runtime-image \
+            scripts/check-go-telemetry-state \
             scripts/ci \
             scripts/entry \
             scripts/install-locked-host-buildx \
@@ -175,6 +176,7 @@ jobs:
             scripts/test \
             scripts/test-buildx-buildkit-version \
             scripts/test-dapper-image-identity \
+            scripts/test-go-telemetry-state \
             scripts/test-install-locked-host-buildx \
             scripts/test-runtime-image-export-load \
             scripts/validate \
@@ -289,6 +291,11 @@ jobs:
                 ' > "evidence/${prefix}-rootfs-diffids.json"
             docker image inspect "$DAPPER_IMAGE" \
               > "evidence/${prefix}-image-inspect.json"
+            docker run --rm \
+              --entrypoint /usr/local/libexec/pasturestack/check-go-telemetry-state \
+              "$DAPPER_IMAGE" \
+              /tmp/go-config/go/telemetry "$source_date_epoch" /usr/local/go/bin/go \
+              > "evidence/${prefix}-go-telemetry-readback.txt"
             docker run --rm --volume "$PWD:/source:ro" --entrypoint go "$DAPPER_IMAGE" \
               version -m /source/bin/ecr-credential-sync \
               > "evidence/${prefix}-binary-build-info.txt"
@@ -298,7 +305,9 @@ jobs:
                 dapper-toolchain.tsv \
                 docker-cli-build.tsv \
                 docker-cli-go-version.txt \
-                buildx-go-version.txt; do
+                buildx-go-version.txt \
+                go-telemetry-mode.txt \
+                go-telemetry-state.tsv; do
               docker run --rm --entrypoint cat "$DAPPER_IMAGE" \
                 "/usr/share/pasturestack/manifests/${manifest}" \
                 > "evidence/${prefix}-${manifest}"
@@ -401,7 +410,10 @@ jobs:
               dapper-toolchain.tsv \
               docker-cli-build.tsv \
               docker-cli-go-version.txt \
-              buildx-go-version.txt; do
+              buildx-go-version.txt \
+              go-telemetry-readback.txt \
+              go-telemetry-mode.txt \
+              go-telemetry-state.tsv; do
             diff -u \
               "evidence/dapper-first-${artifact}" \
               "evidence/dapper-second-${artifact}"
@@ -500,6 +512,36 @@ jobs:
           grep -F $'docker\t29.7.2\tlinux-amd64\t' evidence/dapper-toolchain.tsv >/dev/null
           grep -F $'buildx\t0.36.1\tlinux-amd64\t' evidence/dapper-toolchain.tsv >/dev/null
           grep -F $'jq\t1.8.1-4ubuntu2\tlinux-amd64\t' evidence/dapper-toolchain.tsv >/dev/null
+          source_date_epoch="$(git show -s --format=%ct HEAD)"
+          telemetry_mode_date="$(date -u --date="@${source_date_epoch}" +'%Y-%m-%d')"
+          telemetry_mode="off ${telemetry_mode_date}"
+          printf '%s' "$telemetry_mode" > evidence/go-telemetry-mode.expected
+          cmp -s \
+            evidence/go-telemetry-mode.expected \
+            evidence/dapper-second-go-telemetry-mode.txt
+          telemetry_mode_sha256="$(sha256sum evidence/go-telemetry-mode.expected | cut -d ' ' -f 1)"
+          {
+            printf 'record\tname\tvalue\n'
+            printf 'metadata\tschema\tpasturestack.go-telemetry-state/v1\n'
+            printf 'state\tgo_version\t1.26.6\n'
+            printf 'state\tdirectory\t/tmp/go-config/go/telemetry\n'
+            printf 'state\tmode\toff\n'
+            printf 'state\tmode_date\t%s\n' "$telemetry_mode_date"
+            printf 'state\tmode_format\toff YYYY-MM-DD\n'
+            printf 'state\tmode_sha256\t%s\n' "$telemetry_mode_sha256"
+            printf 'state\tmetadata_epoch\t%s\n' "$source_date_epoch"
+            printf 'state\tlocal\tabsent\n'
+            printf 'state\tupload\tabsent\n'
+            printf 'state\tdebug\tabsent\n'
+            printf 'state\tcounter\tabsent\n'
+            printf 'state\tweekends\tabsent\n'
+            printf 'state\tcount_files\tabsent\n'
+          } > evidence/go-telemetry-state.expected.tsv
+          diff -u \
+            evidence/go-telemetry-state.expected.tsv \
+            evidence/dapper-second-go-telemetry-state.tsv
+          test "$(cat evidence/dapper-second-go-telemetry-readback.txt)" = \
+            "ECR_SYNC_GO_TELEMETRY_STATE_OK mode=off date=${telemetry_mode_date} dir=/tmp/go-config/go/telemetry metadata_epoch=${source_date_epoch} owner=0:0 directory_mode=755 mode_mode=644 mode_sha256=${telemetry_mode_sha256} counters=absent"
           docker run --rm --entrypoint cat "$DAPPER_IMAGE" \
             /usr/share/pasturestack/manifests/docker-cli-build.tsv \
             > evidence/docker-cli-build.tsv
@@ -610,6 +652,36 @@ jobs:
             [.metadata.properties[]?
               | select(.name == "pasturestack:dapper-jq-version")
               | select(.value == "1.8.1-4ubuntu2")
+            ] | length == 1
+          ' evidence/source.cdx.json >/dev/null
+          jq -e '
+            [.metadata.properties[]?
+              | select(.name == "pasturestack:dapper-go-version")
+              | select(.value == "1.26.6")
+            ] | length == 1
+          ' evidence/source.cdx.json >/dev/null
+          jq -e '
+            [.metadata.properties[]?
+              | select(.name == "pasturestack:dapper-go-telemetry-mode")
+              | select(.value == "off")
+            ] | length == 1
+          ' evidence/source.cdx.json >/dev/null
+          jq -e '
+            [.metadata.properties[]?
+              | select(.name == "pasturestack:dapper-go-telemetry-directory")
+              | select(.value == "/tmp/go-config/go/telemetry")
+            ] | length == 1
+          ' evidence/source.cdx.json >/dev/null
+          jq -e '
+            [.metadata.properties[]?
+              | select(.name == "pasturestack:dapper-go-telemetry-mode-date-source")
+              | select(.value == "SOURCE_DATE_EPOCH-UTC")
+            ] | length == 1
+          ' evidence/source.cdx.json >/dev/null
+          jq -e '
+            [.metadata.properties[]?
+              | select(.name == "pasturestack:dapper-go-telemetry-mode-format")
+              | select(.value == "off YYYY-MM-DD")
             ] | length == 1
           ' evidence/source.cdx.json >/dev/null
           jq -e '

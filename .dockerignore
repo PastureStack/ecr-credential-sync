@@ -1,5 +1,7 @@
 *
 !Dockerfile.dapper
 !ubuntu-apt.lock
+!scripts
+!scripts/check-go-telemetry-state
 !toolchain
 !toolchain/buildx-security.patch

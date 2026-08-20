@@ -28,6 +28,7 @@ ARG SOURCE_DATE_EPOCH
 
 COPY --from=snapshot-ca-bootstrap /snapshot-ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 COPY ubuntu-apt.lock /usr/share/pasturestack/manifests/ubuntu-apt.lock
+COPY --chmod=0555 scripts/check-go-telemetry-state /usr/local/libexec/pasturestack/check-go-telemetry-state
 COPY toolchain/buildx-security.patch /usr/share/pasturestack/patches/buildx-security.patch
 
 RUN set -eux; \
@@ -35,6 +36,7 @@ RUN set -eux; \
     test "${SOURCE_DATE_EPOCH}" -le "$(date -u +%s)"; \
     touch --no-dereference --date="@${SOURCE_DATE_EPOCH}" \
         /etc/ssl/certs/ca-certificates.crt \
+        /usr/local/libexec/pasturestack/check-go-telemetry-state \
         /usr/share/pasturestack/manifests/ubuntu-apt.lock \
         /usr/share/pasturestack/patches/buildx-security.patch
 
@@ -114,7 +116,6 @@ ENV GOPATH=/go \
     GO111MODULE=off \
     GO15VENDOREXPERIMENT=1 \
     GOCACHE=/tmp/go-build-cache \
-    GOTELEMETRY=off \
     XDG_CONFIG_HOME=/tmp/go-config \
     GIT_CONFIG_GLOBAL=/tmp/gitconfig
 
@@ -129,7 +130,20 @@ RUN set -eux; \
     echo "${go_sha}  /tmp/go.tgz" | sha256sum -c -; \
     tar -xzf /tmp/go.tgz -C /usr/local; \
     rm -f /tmp/go.tgz; \
-    go version
+    /usr/local/go/bin/go telemetry off; \
+    telemetry_root=/tmp/go-config/go/telemetry; \
+    telemetry_mode_date="$(date -u --date="@${SOURCE_DATE_EPOCH}" +'%Y-%m-%d')"; \
+    printf 'off %s' "${telemetry_mode_date}" > "${telemetry_root}/mode"; \
+    chmod 0755 /tmp/go-config /tmp/go-config/go "${telemetry_root}"; \
+    chmod 0644 "${telemetry_root}/mode"; \
+    touch --no-dereference --date="@${SOURCE_DATE_EPOCH}" \
+        /tmp/go-config \
+        /tmp/go-config/go \
+        "${telemetry_root}" \
+        "${telemetry_root}/mode"; \
+    bash /usr/local/libexec/pasturestack/check-go-telemetry-state "${telemetry_root}" "${SOURCE_DATE_EPOCH}" /usr/local/go/bin/go; \
+    go version; \
+    bash /usr/local/libexec/pasturestack/check-go-telemetry-state "${telemetry_root}" "${SOURCE_DATE_EPOCH}" /usr/local/go/bin/go
 
 RUN set -eux; \
     docker_source_uri="https://codeload.github.com/docker/cli/tar.gz/${DOCKER_GIT_COMMIT}"; \
@@ -168,7 +182,8 @@ RUN set -eux; \
         /usr/bin/docker \
         /usr/share/pasturestack/manifests/docker-cli-build.tsv \
         /usr/share/pasturestack/manifests/docker-cli-go-version.txt; \
-    rm -rf /tmp/docker-cli-src /tmp/docker-cli.tar.gz /tmp/docker-go-mod /tmp/go-build-cache
+    rm -rf /tmp/docker-cli-src /tmp/docker-cli.tar.gz /tmp/docker-go-mod /tmp/go-build-cache; \
+    bash /usr/local/libexec/pasturestack/check-go-telemetry-state /tmp/go-config/go/telemetry "${SOURCE_DATE_EPOCH}" /usr/local/go/bin/go
 
 RUN set -eux; \
     buildx_source_uri="https://codeload.github.com/docker/buildx/tar.gz/${BUILDX_GIT_COMMIT}"; \
@@ -200,7 +215,8 @@ RUN set -eux; \
     touch --no-dereference --date="@${SOURCE_DATE_EPOCH}" \
         /usr/libexec/docker/cli-plugins/docker-buildx \
         /usr/share/pasturestack/manifests/buildx-go-version.txt; \
-    rm -rf /tmp/buildx-src /tmp/buildx.tar.gz /tmp/buildx-deps.txt /tmp/go-build-cache
+    rm -rf /tmp/buildx-src /tmp/buildx.tar.gz /tmp/buildx-deps.txt /tmp/go-build-cache; \
+    bash /usr/local/libexec/pasturestack/check-go-telemetry-state /tmp/go-config/go/telemetry "${SOURCE_DATE_EPOCH}" /usr/local/go/bin/go
 
 RUN set -eux; \
     . /usr/share/pasturestack/manifests/ubuntu-apt.lock; \
@@ -222,8 +238,35 @@ RUN set -eux; \
             "${UBUNTU_APT_JQ_VERSION}" "${DAPPER_HOST_ARCH}" \
             "$(sha256sum /usr/bin/jq | awk '{ print $1 }')" "$(jq --version)"; \
     } > /usr/share/pasturestack/manifests/dapper-toolchain.tsv; \
+    telemetry_root=/tmp/go-config/go/telemetry; \
+    telemetry_mode_date="$(date -u --date="@${SOURCE_DATE_EPOCH}" +'%Y-%m-%d')"; \
+    telemetry_mode_sha256="$(sha256sum "${telemetry_root}/mode" | awk '{ print $1 }')"; \
+    cp "${telemetry_root}/mode" /usr/share/pasturestack/manifests/go-telemetry-mode.txt; \
+    { \
+        printf 'record\tname\tvalue\n'; \
+        printf 'metadata\tschema\tpasturestack.go-telemetry-state/v1\n'; \
+        printf 'state\tgo_version\t%s\n' "${GO_VERSION}"; \
+        printf 'state\tdirectory\t%s\n' "${telemetry_root}"; \
+        printf 'state\tmode\toff\n'; \
+        printf 'state\tmode_date\t%s\n' "${telemetry_mode_date}"; \
+        printf 'state\tmode_format\toff YYYY-MM-DD\n'; \
+        printf 'state\tmode_sha256\t%s\n' "${telemetry_mode_sha256}"; \
+        printf 'state\tmetadata_epoch\t%s\n' "${SOURCE_DATE_EPOCH}"; \
+        printf 'state\tlocal\tabsent\n'; \
+        printf 'state\tupload\tabsent\n'; \
+        printf 'state\tdebug\tabsent\n'; \
+        printf 'state\tcounter\tabsent\n'; \
+        printf 'state\tweekends\tabsent\n'; \
+        printf 'state\tcount_files\tabsent\n'; \
+    } > /usr/share/pasturestack/manifests/go-telemetry-state.tsv; \
+    chmod 0444 \
+        /usr/share/pasturestack/manifests/go-telemetry-mode.txt \
+        /usr/share/pasturestack/manifests/go-telemetry-state.tsv; \
     touch --no-dereference --date="@${SOURCE_DATE_EPOCH}" \
-        /usr/share/pasturestack/manifests/dapper-toolchain.tsv
+        /usr/share/pasturestack/manifests/dapper-toolchain.tsv \
+        /usr/share/pasturestack/manifests/go-telemetry-mode.txt \
+        /usr/share/pasturestack/manifests/go-telemetry-state.tsv; \
+    bash /usr/local/libexec/pasturestack/check-go-telemetry-state "${telemetry_root}" "${SOURCE_DATE_EPOCH}" /usr/local/go/bin/go
 
 ENV DAPPER_SOURCE=/go/src/github.com/PastureStack/ecr-credential-sync/
 ENV DAPPER_OUTPUT="./bin ./dist"

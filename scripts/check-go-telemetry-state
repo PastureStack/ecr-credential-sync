@@ -1,0 +1,138 @@
+#!/bin/bash
+set -euo pipefail
+
+fail() {
+  printf 'ECR_SYNC_GO_TELEMETRY_STATE_INVALID reason=%s\n' "$1" >&2
+  exit 1
+}
+
+if [ "$#" -ne 3 ]; then
+  fail argument-count
+fi
+
+telemetry_root=${1%/}
+source_date_epoch=$2
+go_binary=$3
+
+case "$source_date_epoch" in
+  ''|*[!0-9]*) fail source-date-epoch-invalid ;;
+esac
+case "$telemetry_root" in
+  /*/go/telemetry) ;;
+  *) fail telemetry-root-layout-invalid ;;
+esac
+case "$go_binary" in
+  /*) ;;
+  *) fail go-binary-not-absolute ;;
+esac
+
+config_go_root=${telemetry_root%/telemetry}
+config_root=${config_go_root%/go}
+if [ -z "$config_root" ] || [ "$config_root" = "$config_go_root" ]; then
+  fail telemetry-root-layout-invalid
+fi
+if [ ! -f "$go_binary" ] || [ -L "$go_binary" ] || [ ! -x "$go_binary" ]; then
+  fail go-binary-invalid
+fi
+
+expected_date=$(date -u --date="@${source_date_epoch}" +'%Y-%m-%d') ||
+  fail source-date-epoch-unrepresentable
+expected_mode="off ${expected_date}"
+mode_file=${telemetry_root}/mode
+
+verify_mode_bytes() {
+  local mode_size
+
+  if [ ! -f "$mode_file" ] || [ -L "$mode_file" ]; then
+    fail mode-file-invalid
+  fi
+  mode_size=$(wc -c < "$mode_file")
+  mode_size=${mode_size//[[:space:]]/}
+  if [ "$mode_size" != "${#expected_mode}" ] ||
+     [ "$(cat "$mode_file")" != "$expected_mode" ]; then
+    fail mode-content-noncanonical
+  fi
+}
+
+reject_path() {
+  local path=$1
+  local reason=$2
+  if [ -e "$path" ] || [ -L "$path" ]; then
+    fail "$reason"
+  fi
+}
+
+reject_counter_state() {
+  local count_file
+  local root_entries
+
+  if ! count_file=$(find "$telemetry_root" -mindepth 1 -maxdepth 2 \
+      -name '*.count' -print -quit); then
+    fail count-file-scan-failed
+  fi
+  if [ -n "$count_file" ]; then
+    fail count-file-present
+  fi
+  reject_path "$telemetry_root/local/weekends" weekends-state-present
+  reject_path "$telemetry_root/weekends" weekends-state-present
+  reject_path "$telemetry_root/local/counter" counter-state-present
+  reject_path "$telemetry_root/counter" counter-state-present
+  reject_path "$telemetry_root/local" local-state-present
+  reject_path "$telemetry_root/upload" upload-state-present
+  reject_path "$telemetry_root/debug" debug-state-present
+  if ! root_entries=$(find "$telemetry_root" -mindepth 1 -maxdepth 1 \
+      -printf '%f\n' | LC_ALL=C sort); then
+    fail telemetry-root-scan-failed
+  fi
+  if [ "$root_entries" != mode ]; then
+    fail unexpected-telemetry-state-present
+  fi
+}
+
+verify_metadata() {
+  local owner
+  local path
+
+  for path in "$config_root" "$config_go_root" "$telemetry_root"; do
+    if [ ! -d "$path" ] || [ -L "$path" ] ||
+       [ "$(realpath -e -- "$path")" != "$path" ]; then
+      fail directory-metadata-invalid
+    fi
+  done
+  owner=$(stat -Lc '%u:%g' -- "$config_root")
+  for path in "$config_root" "$config_go_root" "$telemetry_root"; do
+    if [ "$(stat -Lc '%u:%g:%a:%Y' -- "$path")" != "${owner}:755:${source_date_epoch}" ]; then
+      fail directory-metadata-noncanonical
+    fi
+  done
+  if [ "$(stat -Lc '%u:%g:%a:%Y' -- "$mode_file")" != "${owner}:644:${source_date_epoch}" ]; then
+    fail mode-metadata-noncanonical
+  fi
+}
+
+verify_mode_bytes
+reject_counter_state
+verify_metadata
+
+if ! telemetry_mode=$("$go_binary" env GOTELEMETRY); then
+  fail go-env-telemetry-readback-failed
+fi
+if [ "$telemetry_mode" != off ]; then
+  fail go-env-telemetry-mismatch
+fi
+if ! telemetry_dir=$("$go_binary" env GOTELEMETRYDIR); then
+  fail go-env-telemetry-dir-readback-failed
+fi
+if [ "$telemetry_dir" != "$telemetry_root" ]; then
+  fail go-env-telemetry-dir-mismatch
+fi
+
+verify_mode_bytes
+reject_counter_state
+verify_metadata
+
+telemetry_owner=$(stat -Lc '%u:%g' -- "$telemetry_root")
+mode_sha256=$(sha256sum "$mode_file")
+mode_sha256=${mode_sha256%% *}
+printf 'ECR_SYNC_GO_TELEMETRY_STATE_OK mode=off date=%s dir=%s metadata_epoch=%s owner=%s directory_mode=755 mode_mode=644 mode_sha256=%s counters=absent\n' \
+  "$expected_date" "$telemetry_root" "$source_date_epoch" "$telemetry_owner" "$mode_sha256"

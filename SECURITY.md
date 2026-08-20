@@ -82,6 +82,14 @@ the test suite never waits on production delays.
   and identity-bound image; broad builder or image pruning is forbidden.
 - The build does not download the historical Dapper binary or use its retired
   upstream build image.
+- Go telemetry is disabled with the official `go telemetry off` command before
+  the first ordinary Go invocation. Its mode file is then canonicalized to the
+  exact `off YYYY-MM-DD` format with the UTC date and metadata derived from
+  `SOURCE_DATE_EPOCH`; an OS `GOTELEMETRY` variable is not accepted as a
+  control. The same repository-owned verifier runs after every Go-bearing
+  layer and in final-image evidence, requiring the derived mode and directory
+  values and rejecting local, upload, debug, counter, weekends, or `.count`
+  state.
 - The Windows variant uses the Microsoft Nano Server LTSC 2022 base, runs as
   `ContainerUser`, and contains only the cross-compiled service executable
   above that base. Validate the host build against the Windows Server 2022
