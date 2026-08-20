@@ -16,67 +16,162 @@ if [ ! -e "$root" ] && [ ! -L "$root" ]; then
   exit 0
 fi
 
-test -d "$root"
-test ! -L "$root"
-test -O "$root"
-test "$(realpath -e -- "$root")" = "$root"
-test "$(stat -Lc '%a' -- "$root")" = 700
-current_identity=$(stat -Lc '%d:%i:%u:%g:%a' -- "$root")
-test "$current_identity" = "$expected_identity"
+validate_root() {
+  test -d "$root"
+  test ! -L "$root"
+  test -O "$root"
+  test "$(realpath -e -- "$root")" = "$root"
+  test "$(stat -Lc '%a' -- "$root")" = 700
+  current_identity=$(stat -Lc '%d:%i:%u:%g:%a' -- "$root")
+  test "$current_identity" = "$expected_identity"
+}
+
+validate_root
 
 caller_uid=$(id -u)
 caller_gid=$(id -g)
-exact_files=(
-  "${root}/db/metadata.json"
-  "${root}/db/trivy.db"
+caller_owner="${caller_uid}:${caller_gid}"
+expected_manifest_paths=(
+  db
+  db/metadata.json
+  db/trivy.db
+  fanal
+  fanal/fanal.db
 )
-exact_directories=(
-  "${root}/fanal"
-  "${root}/db"
+expected_manifest_types=(
+  d
+  f
+  f
+  d
+  f
 )
-expected_inventory=$'db\ndb/metadata.json\ndb/trivy.db\nfanal'
-actual_inventory=$(
-  sudo find -P "$root" -xdev -mindepth 1 -printf '%P\n' |
-    LC_ALL=C sort
-)
-test "$actual_inventory" = "$expected_inventory"
+actual_manifest=$(
+  sudo find -P "$root" -xdev -mindepth 1 -maxdepth 2 \
+    -printf '%P\0%y\0%U:%G\0' |
+    (
+      set -euo pipefail
+      db_owner=
+      metadata_owner=
+      database_owner=
+      fanal_owner=
+      fanal_database_owner=
+      record_count=0
 
-for path in "${exact_files[@]}"; do
+      while IFS= read -r -d '' relative_path; do
+        IFS= read -r -d '' path_type
+        IFS= read -r -d '' path_owner
+        case "$path_owner" in
+          0:0|"$caller_owner") ;;
+          *) exit 1 ;;
+        esac
+        case "${relative_path}:${path_type}" in
+          db:d)
+            test -z "$db_owner"
+            db_owner=$path_owner
+            ;;
+          db/metadata.json:f)
+            test -z "$metadata_owner"
+            metadata_owner=$path_owner
+            ;;
+          db/trivy.db:f)
+            test -z "$database_owner"
+            database_owner=$path_owner
+            ;;
+          fanal:d)
+            test -z "$fanal_owner"
+            fanal_owner=$path_owner
+            ;;
+          fanal/fanal.db:f)
+            test -z "$fanal_database_owner"
+            fanal_database_owner=$path_owner
+            ;;
+          *) exit 1 ;;
+        esac
+        record_count=$((record_count + 1))
+      done
+
+      test "$record_count" -eq 5
+      for path_owner in \
+          "$db_owner" \
+          "$metadata_owner" \
+          "$database_owner" \
+          "$fanal_owner" \
+          "$fanal_database_owner"; do
+        test -n "$path_owner"
+      done
+      printf 'db\td\t%s\n' "$db_owner"
+      printf 'db/metadata.json\tf\t%s\n' "$metadata_owner"
+      printf 'db/trivy.db\tf\t%s\n' "$database_owner"
+      printf 'fanal\td\t%s\n' "$fanal_owner"
+      printf 'fanal/fanal.db\tf\t%s\n' "$fanal_database_owner"
+    )
+)
+mapfile -t actual_manifest_lines <<<"$actual_manifest"
+test "${#actual_manifest_lines[@]}" -eq 5
+declare -A manifest_owners=()
+for index in "${!expected_manifest_paths[@]}"; do
+  IFS=$'\t' read -r relative_path path_type path_owner extra \
+    <<<"${actual_manifest_lines[$index]}"
+  test -z "${extra:-}"
+  test "$relative_path" = "${expected_manifest_paths[$index]}"
+  test "$path_type" = "${expected_manifest_types[$index]}"
+  case "$path_owner" in
+    0:0|"$caller_owner") ;;
+    *) exit 1 ;;
+  esac
+  manifest_owners["$relative_path"]=$path_owner
+done
+
+validate_root
+
+exact_file_relatives=(
+  db/metadata.json
+  db/trivy.db
+  fanal/fanal.db
+)
+exact_directory_relatives=(
+  fanal
+  db
+)
+
+for relative_path in "${exact_file_relatives[@]}"; do
+  path="${root}/${relative_path}"
+  sudo chown --no-dereference \
+    --from="${manifest_owners[$relative_path]}" -- \
+    "$caller_owner" "$path"
+done
+for relative_path in "${exact_directory_relatives[@]}"; do
+  path="${root}/${relative_path}"
+  sudo chown --no-dereference \
+    --from="${manifest_owners[$relative_path]}" -- \
+    "$caller_owner" "$path"
+done
+
+for relative_path in "${exact_file_relatives[@]}"; do
+  path="${root}/${relative_path}"
+  test ! -L "$path"
   test -f "$path"
-  test ! -L "$path"
-  owner=$(stat -Lc '%u:%g' -- "$path")
-  case "$owner" in
-    "0:0"|"${caller_uid}:${caller_gid}") ;;
-    *) exit 1 ;;
-  esac
+  test "$(stat -Lc '%u:%g' -- "$path")" = "$caller_owner"
 done
-for path in "${exact_directories[@]}"; do
+for relative_path in "${exact_directory_relatives[@]}"; do
+  path="${root}/${relative_path}"
+  test ! -L "$path"
   test -d "$path"
-  test ! -L "$path"
-  owner=$(stat -Lc '%u:%g' -- "$path")
-  case "$owner" in
-    "0:0"|"${caller_uid}:${caller_gid}") ;;
-    *) exit 1 ;;
-  esac
+  test "$(stat -Lc '%u:%g' -- "$path")" = "$caller_owner"
 done
 
-for path in "${exact_files[@]}" "${exact_directories[@]}"; do
-  owner=$(stat -Lc '%u:%g' -- "$path")
-  if [ "$owner" = "0:0" ]; then
-    sudo chown -- "${caller_uid}:${caller_gid}" "$path"
-  fi
-  test "$(stat -Lc '%u:%g' -- "$path")" = \
-    "${caller_uid}:${caller_gid}"
-done
+validate_root
 
-for path in "${exact_files[@]}"; do
+for relative_path in "${exact_file_relatives[@]}"; do
+  path="${root}/${relative_path}"
   rm -f -- "$path"
 done
-for path in "${exact_directories[@]}"; do
+for relative_path in "${exact_directory_relatives[@]}"; do
+  path="${root}/${relative_path}"
   rmdir -- "$path"
 done
 rmdir -- "$root"
 test ! -e "$root"
 test ! -L "$root"
 
-printf 'ECR_SYNC_TRIVY_CACHE_CLEANUP_OK inventory=exact owner=root-or-caller\n'
+printf 'ECR_SYNC_TRIVY_CACHE_CLEANUP_OK inventory=exact-five-path-typed owner=root-or-caller\n'

@@ -20,6 +20,15 @@ else
 fi
 
 sudo() {
+  if [ "${ECR_SYNC_FIXTURE_FAIL_SUDO_FIND:-0}" = 1 ] &&
+      [ "${1:-}" = find ]; then
+    if [ "$EUID" -eq 0 ]; then
+      command "$@" || return $?
+    else
+      command "$fixture_sudo_path" "$@" || return $?
+    fi
+    return 97
+  fi
   if [ "$EUID" -eq 0 ]; then
     command "$@"
   else
@@ -53,20 +62,28 @@ cleanup_fixture_layout() {
   test "$(stat -Lc '%u:%g' -- "$root")" = \
     "${caller_uid}:${caller_gid}"
   for path in \
-    "$root/db/metadata.json" \
-    "$root/db/trivy.db" \
     "$root/fanal" \
     "$root/db"; do
     if [ -e "$path" ] || [ -L "$path" ]; then
-      if [ ! -L "$path" ]; then
-        sudo chown -- "${caller_uid}:${caller_gid}" "$path"
-      fi
+      sudo chown --no-dereference -- \
+        "${caller_uid}:${caller_gid}" "$path"
     fi
   done
-  if [ -e "$root/fanal/unexpected" ] || [ -L "$root/fanal/unexpected" ]; then
-    rm -f -- "$root/fanal/unexpected"
-  fi
-  rm -f -- "$root/db/metadata.json" "$root/db/trivy.db"
+  for path in \
+    "$root/db/metadata.json" \
+    "$root/db/trivy.db" \
+    "$root/fanal/fanal.db" \
+    "$root/fanal/unexpected"; do
+    if [ -e "$path" ] || [ -L "$path" ]; then
+      sudo chown --no-dereference -- \
+        "${caller_uid}:${caller_gid}" "$path"
+    fi
+  done
+  rm -f -- \
+    "$root/db/metadata.json" \
+    "$root/db/trivy.db" \
+    "$root/fanal/fanal.db" \
+    "$root/fanal/unexpected"
   if [ -L "$root/fanal" ]; then
     rm -f -- "$root/fanal"
   elif [ -d "$root/fanal" ]; then
@@ -78,6 +95,10 @@ cleanup_fixture_layout() {
 
 cleanup_fixture_parent() {
   cleanup_fixture_layout
+  if [ -e "$fixture_parent/fanal-db-target" ] ||
+      [ -L "$fixture_parent/fanal-db-target" ]; then
+    rm -f -- "$fixture_parent/fanal-db-target"
+  fi
   if [ -d "$fixture_parent/symlink-target" ]; then
     rmdir -- "$fixture_parent/symlink-target"
   fi
@@ -98,6 +119,15 @@ create_layout() {
   case "$fanal_kind" in
     directory)
       mkdir -m 0700 -- "$root/fanal"
+      printf 'fixture-fanal-database\n' > "$root/fanal/fanal.db"
+      ;;
+    missing-fanal-db)
+      mkdir -m 0700 -- "$root/fanal"
+      ;;
+    fanal-db-symlink)
+      mkdir -m 0700 -- "$root/fanal"
+      printf 'fixture-target\n' > "$fixture_parent/fanal-db-target"
+      ln -s -- "$fixture_parent/fanal-db-target" "$root/fanal/fanal.db"
       ;;
     symlink)
       mkdir -m 0700 -- "$fixture_parent/symlink-target"
@@ -105,44 +135,78 @@ create_layout() {
       ;;
     *) exit 1 ;;
   esac
-  sudo chown -- 0:0 "$root/db/metadata.json"
-  sudo chown -- 0:0 "$root/db/trivy.db"
-  sudo chown -- 0:0 "$root/db"
-  if [ "$fanal_kind" = directory ]; then
-    sudo chown -- 0:0 "$root/fanal"
+  sudo chown --no-dereference -- 0:0 "$root/db/metadata.json"
+  sudo chown --no-dereference -- 0:0 "$root/db/trivy.db"
+  sudo chown --no-dereference -- 0:0 "$root/db"
+  if [ "$fanal_kind" != symlink ]; then
+    if [ -e "$root/fanal/fanal.db" ] || [ -L "$root/fanal/fanal.db" ]; then
+      sudo chown --no-dereference -- 0:0 "$root/fanal/fanal.db"
+    fi
+    sudo chown --no-dereference -- 0:0 "$root/fanal"
   fi
 }
 
 expect_failure() {
   local name=$1
   local identity=$2
+  local expected_status=${3:-}
+  local pre_identity
+  local status
   local stdout="${fixture_parent}/${name}.stdout"
   local stderr="${fixture_parent}/${name}.stderr"
 
+  pre_identity=$(stat -Lc '%d:%i:%u:%g:%a' -- "$root")
   if bash "$cleaner" "$root" "$identity" >"$stdout" 2>"$stderr"; then
     printf 'expected Trivy cleanup fixture to fail: %s\n' "$name" >&2
     exit 1
+  else
+    status=$?
+  fi
+  test "$status" -ne 0
+  if [ -n "$expected_status" ]; then
+    test "$status" -eq "$expected_status"
   fi
   test ! -s "$stdout"
   test -d "$root"
+  test "$(stat -Lc '%d:%i:%u:%g:%a' -- "$root")" = "$pre_identity"
   rm -f -- "$stdout" "$stderr"
 }
 
-# root-owned-empty-fanal: the exact production layout is enumerable and removed.
+# root-owned-fanal-db: the exact production layout is enumerable and removed.
 create_layout
 root_identity=$(stat -Lc '%d:%i:%u:%g:%a' -- "$root")
 bash "$cleaner" "$root" "$root_identity" >/dev/null
 test ! -e "$root"
 test ! -L "$root"
 
-# unexpected-child: no cache entry outside the four-path allowlist is accepted.
+# unexpected-child: no cache entry outside the five-path allowlist is accepted.
 create_layout
-sudo chown -- "${caller_uid}:${caller_gid}" "$root/fanal"
+sudo chown --no-dereference -- "${caller_uid}:${caller_gid}" "$root/fanal"
 printf 'unexpected\n' > "$root/fanal/unexpected"
-sudo chown -- 0:0 "$root/fanal"
+sudo chown --no-dereference -- 0:0 "$root/fanal/unexpected"
+sudo chown --no-dereference -- 0:0 "$root/fanal"
 root_identity=$(stat -Lc '%d:%i:%u:%g:%a' -- "$root")
 expect_failure unexpected-child "$root_identity"
 cleanup_fixture_layout
+
+# missing-fanal-db: every expected regular file must be present.
+create_layout missing-fanal-db
+root_identity=$(stat -Lc '%d:%i:%u:%g:%a' -- "$root")
+expect_failure missing-fanal-db "$root_identity"
+cleanup_fixture_layout
+
+# fanal-db-symlink: the expected child must be a regular file, never a link.
+create_layout fanal-db-symlink
+root_identity=$(stat -Lc '%d:%i:%u:%g:%a' -- "$root")
+fanal_db_target_identity=$(stat -Lc '%d:%i:%u:%g:%a' -- \
+  "$fixture_parent/fanal-db-target")
+expect_failure fanal-db-symlink "$root_identity"
+test "$(stat -Lc '%d:%i:%u:%g:%a' -- \
+  "$fixture_parent/fanal-db-target")" = "$fanal_db_target_identity"
+IFS= read -r fanal_db_target_content < "$fixture_parent/fanal-db-target"
+test "$fanal_db_target_content" = fixture-target
+cleanup_fixture_layout
+rm -f -- "$fixture_parent/fanal-db-target"
 
 # symlink: find never follows it and the exact type check rejects it.
 create_layout symlink
@@ -153,7 +217,7 @@ rmdir -- "$fixture_parent/symlink-target"
 
 # wrong-owner: children may only remain root-owned or caller-owned.
 create_layout
-sudo chown -- 65534:65534 "$root/db/trivy.db"
+sudo chown --no-dereference -- 65534:65534 "$root/db/trivy.db"
 root_identity=$(stat -Lc '%d:%i:%u:%g:%a' -- "$root")
 expect_failure wrong-owner "$root_identity"
 cleanup_fixture_layout
@@ -164,5 +228,13 @@ root_identity=$(stat -Lc '%d:%i:%u:%g:%a' -- "$root")
 expect_failure root-identity "${root_identity}:stale"
 cleanup_fixture_layout
 
-printf 'ECR_SYNC_TRIVY_CACHE_CLEANUP_FIXTURES_OK positive=1 negative=4 sudo_find=exact-no-follow sudo_mode=%s inherited=%s\n' \
+# sudo-find-failure: pipeline failure must propagate even after valid output.
+create_layout
+root_identity=$(stat -Lc '%d:%i:%u:%g:%a' -- "$root")
+export ECR_SYNC_FIXTURE_FAIL_SUDO_FIND=1
+expect_failure sudo-find-failure "$root_identity" 97
+unset ECR_SYNC_FIXTURE_FAIL_SUDO_FIND
+cleanup_fixture_layout
+
+printf 'ECR_SYNC_TRIVY_CACHE_CLEANUP_FIXTURES_OK positive=1 negative=7 sudo_find=exact-no-follow-pipefail sudo_find_failure=97-after-valid-manifest sudo_mode=%s inherited=%s\n' \
   "$fixture_sudo_mode" "$child_sudo_kind"

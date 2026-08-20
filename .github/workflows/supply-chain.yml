@@ -836,7 +836,7 @@ jobs:
           test "$(stat -Lc '%d:%i:%u:%g:%a' -- "$trivy_cache")" = \
             "$trivy_cache_identity"
           trivy_cache_entries_output="$(
-            sudo find -P "$trivy_cache" -xdev -mindepth 1 \
+            sudo find -P "$trivy_cache" -xdev -mindepth 1 -maxdepth 2 \
               -printf '%y\t%P\n' |
               LC_ALL=C sort
           )"
@@ -848,6 +848,7 @@ jobs:
             $'d\tfanal'
             $'f\tdb/metadata.json'
             $'f\tdb/trivy.db'
+            $'f\tfanal/fanal.db'
           )
           test "${#trivy_cache_entries[@]}" -eq "${#expected_trivy_cache_entries[@]}"
           for index in "${!expected_trivy_cache_entries[@]}"; do
