@@ -3,6 +3,33 @@ set -euo pipefail
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 cleaner="$repo_root/scripts/cleanup-exact-trivy-cache"
+
+fixture_sudo_path=
+if [ "$EUID" -eq 0 ]; then
+  fixture_sudo_mode=root-direct
+else
+  fixture_sudo_path=$(type -P sudo)
+  test -n "$fixture_sudo_path"
+  case "$fixture_sudo_path" in
+    /*) ;;
+    *) exit 1 ;;
+  esac
+  test -x "$fixture_sudo_path"
+  export fixture_sudo_path
+  fixture_sudo_mode=external
+fi
+
+sudo() {
+  if [ "$EUID" -eq 0 ]; then
+    command "$@"
+  else
+    command "$fixture_sudo_path" "$@"
+  fi
+}
+export -f sudo
+child_sudo_kind=$(bash -c 'type -t sudo')
+test "$child_sudo_kind" = function
+
 fixture_parent=$(mktemp -d)
 case "$fixture_parent" in
   /tmp/*|/var/tmp/*) ;;
@@ -137,4 +164,5 @@ root_identity=$(stat -Lc '%d:%i:%u:%g:%a' -- "$root")
 expect_failure root-identity "${root_identity}:stale"
 cleanup_fixture_layout
 
-printf 'ECR_SYNC_TRIVY_CACHE_CLEANUP_FIXTURES_OK positive=1 negative=4 sudo_find=exact-no-follow\n'
+printf 'ECR_SYNC_TRIVY_CACHE_CLEANUP_FIXTURES_OK positive=1 negative=4 sudo_find=exact-no-follow sudo_mode=%s inherited=%s\n' \
+  "$fixture_sudo_mode" "$child_sudo_kind"
