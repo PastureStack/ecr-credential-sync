@@ -877,12 +877,12 @@ require_marker SECURITY.md 'archive hash' ECR_SYNC_RUNTIME_EXPORT_SECURITY_CONTR
 require_marker SECURITY.md '`off YYYY-MM-DD`' ECR_SYNC_GO_TELEMETRY_SECURITY_CONTRACT_MISSING
 require_marker go.mod 'go 1.26.0' ECR_SYNC_GO_LANGUAGE_FLOOR_MISSING
 require_marker go.mod 'toolchain go1.27.0' ECR_SYNC_GO_TOOLCHAIN_MISSING
-require_marker go.mod 'github.com/aws/aws-sdk-go-v2 v1.43.7' ECR_SYNC_AWS_SDK_V2_CORE_MISSING
-require_marker go.mod 'github.com/aws/aws-sdk-go-v2/config v1.32.38' ECR_SYNC_AWS_SDK_V2_CONFIG_MISSING
-require_marker go.mod 'github.com/aws/aws-sdk-go-v2/credentials v1.19.37' ECR_SYNC_AWS_SDK_V2_CREDENTIALS_MISSING
-require_marker go.mod 'github.com/aws/aws-sdk-go-v2/service/ecr v1.60.7' ECR_SYNC_AWS_SDK_V2_ECR_MISSING
-require_marker go.mod 'github.com/aws/aws-sdk-go-v2/service/sts v1.45.7' ECR_SYNC_AWS_SDK_V2_STS_MISSING
-require_marker go.mod 'github.com/sirupsen/logrus v1.10.1' ECR_SYNC_LOGRUS_CURRENT_MISSING
+require_marker go.mod 'github.com/aws/aws-sdk-go-v2 v1.43.8' ECR_SYNC_AWS_SDK_V2_CORE_MISSING
+require_marker go.mod 'github.com/aws/aws-sdk-go-v2/config v1.32.39' ECR_SYNC_AWS_SDK_V2_CONFIG_MISSING
+require_marker go.mod 'github.com/aws/aws-sdk-go-v2/credentials v1.19.38' ECR_SYNC_AWS_SDK_V2_CREDENTIALS_MISSING
+require_marker go.mod 'github.com/aws/aws-sdk-go-v2/service/ecr v1.60.8' ECR_SYNC_AWS_SDK_V2_ECR_MISSING
+require_marker go.mod 'github.com/aws/aws-sdk-go-v2/service/sts v1.45.8' ECR_SYNC_AWS_SDK_V2_STS_MISSING
+require_marker go.mod 'github.com/sirupsen/logrus v1.10.2' ECR_SYNC_LOGRUS_CURRENT_MISSING
 require_marker go.mod 'golang.org/x/sys v0.47.0' ECR_SYNC_X_SYS_CURRENT_MISSING
 reject_marker go.mod 'github.com/aws/aws-sdk-go v1.' ECR_SYNC_AWS_SDK_V1_MODULE_PRESENT
 if [ -e vendor.conf ] || [ -L vendor.conf ]; then
