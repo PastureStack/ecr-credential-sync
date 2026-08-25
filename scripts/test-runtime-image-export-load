@@ -275,7 +275,7 @@ run_case() {
     RUNTIME_IMAGE_TEMP_ROOT="$temp_root" \
     RUNTIME_IMAGE_BUILD_TOKEN="$token" \
     bash "$helper" build \
-      "$image" "$context" "${context}/Dockerfile" 946684800 20260808T000000Z \
+      "$image" "$context" "${context}/Dockerfile" 946684800 20260825T000000Z \
       v3.1.0 "$revision" host "$result" >"$stdout" 2>"$stderr"
   local native_exit=$?
   set -e

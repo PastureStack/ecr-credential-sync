@@ -127,7 +127,7 @@ bash "${SCRIPTPATH}/build-runtime-image" build \
   "$PACKAGE_DIR" \
   "${PACKAGE_DIR}/Dockerfile" \
   "$SOURCE_DATE_EPOCH" \
-  "${UBUNTU_APT_SNAPSHOT:-20260808T000000Z}" \
+  "${UBUNTU_APT_SNAPSHOT:-20260825T000000Z}" \
   "$TAG" \
   "$REVISION" \
   "${DOCKER_BUILD_NETWORK:-host}" \

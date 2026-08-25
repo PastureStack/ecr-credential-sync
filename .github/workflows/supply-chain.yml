@@ -769,13 +769,13 @@ jobs:
           jq -e '
             [.components[]?
               | select(.name == "stdlib")
-              | select((.version // "") | test("^(go|v)?1\\.26\\.6$"))
+              | select((.version // "") | test("^(go|v)?1\\.27\\.0$"))
             ] | length >= 1
           ' evidence/dapper.cdx.json >/dev/null
           jq -e '
             [.components[]?
               | select(.name == "stdlib")
-              | select((.version // "") | test("^(go|v)?1\\.26\\.5$"))
+              | select((.version // "") | test("^(go|v)?1\\.26\\.6$"))
             ] | length == 0
           ' evidence/dapper.cdx.json >/dev/null
           jq -e '

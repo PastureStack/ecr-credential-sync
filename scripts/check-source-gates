@@ -243,7 +243,7 @@ require_marker Dockerfile.dapper 'ARG BUILDX_GO_ARCHIVE_VERSION=v0.3.0' ECR_SYNC
 require_marker Dockerfile.dapper 'ARG BUILDX_X_MOD_VERSION=v0.40.0' ECR_SYNC_BUILDX_X_MOD_VERSION_MISSING
 require_marker Dockerfile.dapper '-X github.com/docker/buildx/version.Version=v${BUILDX_VERSION}' ECR_SYNC_BUILDX_EXECUTABLE_VERSION_PRODUCER_MISSING
 reject_marker Dockerfile.dapper '-X github.com/docker/buildx/version.Version=${BUILDX_VERSION}' ECR_SYNC_BUILDX_EXECUTABLE_VERSION_PRODUCER_NONCANONICAL
-require_marker Dockerfile.dapper 'ARG UBUNTU_APT_SNAPSHOT=20260808T000000Z' ECR_SYNC_APT_SNAPSHOT_NOT_PINNED
+require_marker Dockerfile.dapper 'ARG UBUNTU_APT_SNAPSHOT=20260825T000000Z' ECR_SYNC_APT_SNAPSHOT_NOT_PINNED
 require_marker Dockerfile.dapper 'ubuntu:26.04@sha256:678c6550cc43645e08669028bc177f50be4e7c5b8cca677067b1914d4afc7a03' ECR_SYNC_UBUNTU_DIGEST_NOT_CURRENT
 require_marker Dockerfile.dapper 'dapper-ubuntu-packages.tsv' ECR_SYNC_DAPPER_DPKG_MANIFEST_MISSING
 require_marker Dockerfile.dapper 'dapper-toolchain.tsv' ECR_SYNC_DAPPER_TOOLCHAIN_MANIFEST_MISSING
@@ -625,10 +625,10 @@ fi
 if ! (
   set -euo pipefail
   source ubuntu-apt.lock
-  test "$UBUNTU_APT_LOCKED_SNAPSHOT" = '20260808T000000Z'
+  test "$UBUNTU_APT_LOCKED_SNAPSHOT" = '20260825T000000Z'
   test "$UBUNTU_APT_BASH_VERSION" = '5.3-2ubuntu1'
   test "$UBUNTU_APT_CA_CERTIFICATES_VERSION" = '20260601~26.04.1'
-  test "$UBUNTU_APT_CURL_VERSION" = '8.18.0-1ubuntu2.3'
+  test "$UBUNTU_APT_CURL_VERSION" = '8.18.0-1ubuntu2.4'
   test "$UBUNTU_APT_GCC_VERSION" = '4:15.2.0-5ubuntu1'
   test "$UBUNTU_APT_GIT_VERSION" = '1:2.53.0-1ubuntu1'
   test "$UBUNTU_APT_JQ_VERSION" = '1.8.1-4ubuntu2'
@@ -1017,5 +1017,5 @@ if [ "$failure_count" -ne 0 ]; then
   exit 1
 fi
 
-printf 'ECR_SYNC_SOURCE_GATES_OK go=1.27.0 go_telemetry=off-source-date-epoch-utc go_telemetry_readbacks=5 go_telemetry_cleanup_cwd=two-callers-explicit-root-before-delete docker=29.7.2 docker_cli_source_built=go1.27.0 buildx=0.36.1 dapper_buildx_executable_version=v0.36.1 buildx_go_archive=v0.3.0 buildx_x_mod=v0.40.0 buildx_cves_fixed=3 buildx_patch=sha256:a29fdda204d592d0d46ed32b5fdc4336a7b3a7276301836d0a75b9386ca780f7 jq=1.8.1 jq_package=1.8.1-4ubuntu2 host_buildx=0.36.1 host_buildx_binary=sha256:6bd2cb8809abf99fd2a0acaf50a51b85e9a4b254cc9bfede6305e85f42c59eb2 host_buildx_builds=2-offline-reproducible host_buildkit=0.32.2 buildkit_version_readback=exact-single-record dapper_identity=buildx-iid+metadata-config+daemon-config-or-manifest ubuntu_builder=26.04 snapshot=20260808T000000Z runtime_base=scratch non_root=1 legal_files=%s endpoint_override=bounded brand_gate=tracked_source_only buildx_legacy_module_removed=1 embedded_patch_whitespace_scope=exact-path-with-inner-validation runtime_mtime_normalization=all_local_copy_inputs dapper_reproducibility=buildkit-rewrite-timestamp runtime_export=docker-archive-explicit-load runtime_builder=exact-run-owned-pinned sbom_trivy_gate=1\n' \
+printf 'ECR_SYNC_SOURCE_GATES_OK go=1.27.0 go_telemetry=off-source-date-epoch-utc go_telemetry_readbacks=5 go_telemetry_cleanup_cwd=two-callers-explicit-root-before-delete docker=29.7.2 docker_cli_source_built=go1.27.0 buildx=0.36.1 dapper_buildx_executable_version=v0.36.1 buildx_go_archive=v0.3.0 buildx_x_mod=v0.40.0 buildx_cves_fixed=3 buildx_patch=sha256:a29fdda204d592d0d46ed32b5fdc4336a7b3a7276301836d0a75b9386ca780f7 jq=1.8.1 jq_package=1.8.1-4ubuntu2 host_buildx=0.36.1 host_buildx_binary=sha256:6bd2cb8809abf99fd2a0acaf50a51b85e9a4b254cc9bfede6305e85f42c59eb2 host_buildx_builds=2-offline-reproducible host_buildkit=0.32.2 buildkit_version_readback=exact-single-record dapper_identity=buildx-iid+metadata-config+daemon-config-or-manifest ubuntu_builder=26.04 snapshot=20260825T000000Z runtime_base=scratch non_root=1 legal_files=%s endpoint_override=bounded brand_gate=tracked_source_only buildx_legacy_module_removed=1 embedded_patch_whitespace_scope=exact-path-with-inner-validation runtime_mtime_normalization=all_local_copy_inputs dapper_reproducibility=buildkit-rewrite-timestamp runtime_export=docker-archive-explicit-load runtime_builder=exact-run-owned-pinned sbom_trivy_gate=1\n' \
   "$legal_count"

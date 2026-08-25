@@ -111,7 +111,7 @@ but its official binary still records `go-archive v0.2.1` and `x/mod v0.38.0`;
 upstream has no signed release containing both fixed module versions. Both the
 Dapper and host plugins therefore use the same locked vendor upgrade instead
 of an OpenVEX exception. The Ubuntu 26.04 base image is digest-pinned, and
-all direct APT packages are locked to the official `20260808T000000Z` Ubuntu
+all direct APT packages are locked to the official `20260825T000000Z` Ubuntu
 snapshot. Each image records its resolved `dpkg` inventory, and the build image
 records the installed GCC, Go, Docker, Buildx, and `jq` binaries. The source
 SBOM records the Ubuntu APT lock digest, snapshot, and exact Dapper `jq` version;
