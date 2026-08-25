@@ -39,7 +39,7 @@ the test suite never waits on production delays.
 ## Build boundary
 
 - Build and runtime images use the digest-pinned Ubuntu 26.04 base. The build
-  uses Go 1.26.6, Docker CLI 29.7.2, and the checksum-patched Buildx 0.36.1
+  uses Go 1.27.0, Docker CLI 29.7.2, and the checksum-patched Buildx 0.36.1
   source. Its identity resolver uses `jq` `1.8.1-4ubuntu2`, installed from the
   same dated Ubuntu snapshot and verified against the direct package lock.
 - The host Buildx client is `v0.36.1`, built twice by the repository-owned
@@ -54,13 +54,13 @@ the test suite never waits on production delays.
 - Development packaging may use `scripts/install-locked-host-buildx` only when
   the host plugin does not match the lock. The helper downloads the exact
   Buildx source (`sha256:fb28b5c2a198d05482f0656dfb7ee161240a904e36697bf7108e5d517f23854b`)
-  and Go 1.26.6 archive
-  (`sha256:708effb774be8237570d0add163225abbdfaf4fca28b2611df167beba4feef89`),
+  and Go 1.27.0 archive
+  (`sha256:675c26c449cbb18fc24b74650de1eabbae6e16f64326fd85a283fb3b58280685`),
   applies the repository patch
-  (`sha256:b615fea76706a4c16e2af354b3a92d7b8b0465dce4f2d2c20b7a87bdc3100ad2`),
+  (`sha256:a29fdda204d592d0d46ed32b5fdc4336a7b3a7276301836d0a75b9386ca780f7`),
   and performs two vendor-only, `GOPROXY=off` builds. It requires identical
   dependency lists and binaries, verifies result
-  `sha256:ebb6935c31ef883684ec1721be8cc7e5d0386e5a445e90b7e81c7c8f5dac991d`,
+  `sha256:6bd2cb8809abf99fd2a0acaf50a51b85e9a4b254cc9bfede6305e85f42c59eb2`,
   Buildx `v0.36.1`, commit `1d8dde89b8aba914e05e45366770736fea1fd690`,
   `github.com/moby/go-archive v0.3.0`, and `golang.org/x/mod v0.40.0`. It writes
   only below an empty,
@@ -104,9 +104,14 @@ the test suite never waits on production delays.
   `ContainerUser`, and contains only the cross-compiled service executable
   above that base. Validate the host build against the Windows Server 2022
   container compatibility matrix before production rollout.
-- Runtime distributions include all ten tracked vendored license, notice, and
+- Runtime distributions include all 27 vendored license, notice, and
   author files in addition to the root license and attribution documents.
-- The source OpenVEX record is bound to exact dependency PURLs and is revalidated by package-absence and regression gates on every build. The disposable builder may assess only unfixed `linux-libc-dev` findings because the package supplies headers rather than the vulnerable kernel implementation and is absent from the runtime image. That exact-package assessment expires on 2026-09-15; every other builder finding fails the gate.
+- The source SBOM is generated from `vendor/modules.txt`; source vulnerabilities
+  are not suppressed with OpenVEX and every finding fails the gate. The
+  disposable builder may assess only unfixed `linux-libc-dev` findings because
+  the package supplies headers rather than the vulnerable kernel implementation
+  and is absent from the runtime image. That exact-package assessment expires
+  on 2026-09-15; every other builder finding fails the gate.
 - Do not add broad vulnerability, secret, or misconfiguration ignores.
 
 ## Reporting

@@ -3757,7 +3757,7 @@ index e59cfbb..4d9e87d 100644
 +// cannot detect it with errors.Is. Keep the string comparison isolated here
 +// until Go exports the error; see https://go.dev/issue/74640.
 +func isPathEscapes(err error) bool {
-+	// https://github.com/golang/go/blob/go1.26.5/src/os/file.go#L421
++	// https://github.com/golang/go/blob/go1.27.0/src/os/file.go#L421
 +	const errPathEscapes = "path escapes from parent"
 +	for err != nil {
 +		if errors.Unwrap(err) == nil {

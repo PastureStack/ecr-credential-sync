@@ -1,7 +1,7 @@
 # Modified by PastureStack contributors for independent maintenance and rebranding.
 TARGETS := $(shell ls scripts)
 
-DAPPER_IMAGE ?= pasturestack-ecr-credential-sync-dapper:go1.26.6-docker29.7.2-buildx0.36.1-jq1.8.1
+DAPPER_IMAGE ?= pasturestack-ecr-credential-sync-dapper:go1.27.0-docker29.7.2-buildx0.36.1-jq1.8.1
 DAPPER_HOST_ARCH ?= amd64
 DOCKER_VERSION ?= 29.7.2
 BUILDX_VERSION ?= 0.36.1

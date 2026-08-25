@@ -82,9 +82,9 @@ only in internal validation evidence.
 
 ## Local build and test
 
-The project uses a containerized Go 1.26.6 build environment with vendored
-dependencies. The build image compiles Docker CLI 29.7.2 from its checksum- and
-commit-locked official source with Go 1.26.6, and records both the binary hash
+The project uses a containerized Go 1.27.0 module build with `go.mod`, `go.sum`,
+and an offline `vendor/` tree. The build image compiles Docker CLI 29.7.2 from its checksum- and
+commit-locked official source with Go 1.27.0, and records both the binary hash
 and embedded Go build information. It also locks Buildx 0.36.1 and installs
 `jq` `1.8.1-4ubuntu2` as the fail-closed Dapper identity metadata parser. A
 checksum-locked Buildx patch removes its sole compiled dependency on the legacy
@@ -101,11 +101,11 @@ These host-side locks are recorded in `toolchain/host-build-toolchain.lock` and
 the source SBOM. The lock binds the exact Buildx source archive
 (`sha256:fb28b5c2a198d05482f0656dfb7ee161240a904e36697bf7108e5d517f23854b`),
 vendor/security patch
-(`sha256:b615fea76706a4c16e2af354b3a92d7b8b0465dce4f2d2c20b7a87bdc3100ad2`),
-Go 1.26.6 archive
-(`sha256:708effb774be8237570d0add163225abbdfaf4fca28b2611df167beba4feef89`),
+(`sha256:a29fdda204d592d0d46ed32b5fdc4336a7b3a7276301836d0a75b9386ca780f7`),
+Go 1.27.0 archive
+(`sha256:675c26c449cbb18fc24b74650de1eabbae6e16f64326fd85a283fb3b58280685`),
 and resulting Linux amd64 binary
-(`sha256:ebb6935c31ef883684ec1721be8cc7e5d0386e5a445e90b7e81c7c8f5dac991d`).
+(`sha256:6bd2cb8809abf99fd2a0acaf50a51b85e9a4b254cc9bfede6305e85f42c59eb2`).
 As of 2026-08-20, upstream `v0.36.1` remains the latest signed Buildx release,
 but its official binary still records `go-archive v0.2.1` and `x/mod v0.38.0`;
 upstream has no signed release containing both fixed module versions. Both the
@@ -184,12 +184,10 @@ binaries, and embedded manifests. The workflow produces source, build-image,
 and runtime CycloneDX SBOMs plus Trivy reports. It never logs in to a registry,
 pushes an image, creates a release, or changes a deployment.
 
-The source SBOM intentionally inventories the preserved AWS SDK module even
-though only its ECR and supporting packages are vendored. Module-level scanners
-therefore report three S3 encryption-client advisories whose vulnerable package
-is absent from both the vendor tree and the executable. The exact OpenVEX record
-under `security/` documents that boundary; any new or unmatched source finding
-fails the supply-chain workflow.
+The source SBOM is generated from `vendor/modules.txt`, includes an explicit
+application-to-module dependency graph, and inventories AWS SDK for Go v2.
+AWS SDK for Go v1 and its historical source OpenVEX exceptions are absent. Any
+source vulnerability reported by Trivy fails the supply-chain workflow.
 
 ## Dependency version policy
 

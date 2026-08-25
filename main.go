@@ -3,6 +3,7 @@ package main
 // Modified by PastureStack contributors for independent maintenance and rebranding.
 
 import (
+	"context"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -15,11 +16,12 @@ import (
 	"time"
 
 	"github.com/PastureStack/ecr-credential-sync/internal/platformapi"
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/credentials/stscreds"
-	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/ecr"
-	"github.com/aws/aws-sdk-go/service/ecr/ecriface"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	awsconfig "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials/stscreds"
+	"github.com/aws/aws-sdk-go-v2/service/ecr"
+	"github.com/aws/aws-sdk-go-v2/service/ecr/types"
+	"github.com/aws/aws-sdk-go-v2/service/sts"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -47,6 +49,13 @@ type retryPolicy struct {
 	maxAttempts int
 	delay       func(attempt int) time.Duration
 	sleep       func(time.Duration)
+}
+
+// ecrClient is deliberately limited to the only AWS operation used by this
+// service. Keeping the boundary small avoids coupling tests and production code
+// to the generated surface of the whole ECR client.
+type ecrClient interface {
+	GetAuthorizationToken(context.Context, *ecr.GetAuthorizationTokenInput, ...func(*ecr.Options)) (*ecr.GetAuthorizationTokenOutput, error)
 }
 
 func defaultECRRetryPolicy() retryPolicy {
@@ -225,7 +234,7 @@ func parseRegistryIDs(raw string) ([]string, error) {
 }
 
 func (platform *Platform) updateEcr(
-	svc ecriface.ECRAPI,
+	svc ecrClient,
 	registryClient platformapi.RegistryOperations,
 	registryCredentialClient platformapi.RegistryCredentialOperations) error {
 	err := platform.updateEcrWithRetry(
@@ -241,7 +250,7 @@ func (platform *Platform) updateEcr(
 }
 
 func (platform *Platform) updateEcrWithRetry(
-	svc ecriface.ECRAPI,
+	svc ecrClient,
 	registryClient platformapi.RegistryOperations,
 	registryCredentialClient platformapi.RegistryCredentialOperations,
 	policy retryPolicy) error {
@@ -250,11 +259,11 @@ func (platform *Platform) updateEcrWithRetry(
 
 	request := &ecr.GetAuthorizationTokenInput{}
 	if len(platform.RegistryIds) > 0 {
-		request = &ecr.GetAuthorizationTokenInput{RegistryIds: aws.StringSlice(platform.RegistryIds)}
+		request = &ecr.GetAuthorizationTokenInput{RegistryIds: append([]string(nil), platform.RegistryIds...)}
 	}
 	return policy.do(func() error {
 		log.Println("Attempting to call AWS API for ECR Authorization Token")
-		resp, err := svc.GetAuthorizationToken(request)
+		resp, err := svc.GetAuthorizationToken(context.Background(), request)
 		if err != nil {
 			return fmt.Errorf("AWS ECR authorization token request failed: %w", err)
 		}
@@ -268,7 +277,8 @@ func (platform *Platform) updateEcrWithRetry(
 		}
 
 		var synchronizationErrors []error
-		for _, data := range resp.AuthorizationData {
+		for index := range resp.AuthorizationData {
+			data := &resp.AuthorizationData[index]
 			if err := platform.processToken(data, registryClient, registryCredentialClient); err != nil {
 				synchronizationErrors = append(synchronizationErrors, err)
 			}
@@ -281,7 +291,7 @@ func (platform *Platform) updateEcrWithRetry(
 }
 
 func (platform *Platform) processToken(
-	data *ecr.AuthorizationData,
+	data *types.AuthorizationData,
 	registryClient platformapi.RegistryOperations,
 	registryCredentialClient platformapi.RegistryCredentialOperations) error {
 
@@ -454,13 +464,21 @@ func ping(w http.ResponseWriter, r *http.Request) {
 	_, _ = fmt.Fprint(w, "pong")
 }
 
-func awsClient() (*ecr.ECR, error) {
+func awsClient() (*ecr.Client, error) {
 	region, err := requiredEnvironment("AWS_REGION")
 	if err != nil {
 		return nil, err
 	}
 
-	config := aws.NewConfig().WithRegion(region)
+	config, err := awsconfig.LoadDefaultConfig(
+		context.Background(),
+		awsconfig.WithRegion(region),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("load AWS configuration: %w", err)
+	}
+
+	var clientOptions []func(*ecr.Options)
 	if rawEndpoint := strings.TrimSpace(os.Getenv("AWS_ECR_ENDPOINT_URL")); rawEndpoint != "" {
 		endpoint, err := url.Parse(rawEndpoint)
 		if err != nil {
@@ -472,16 +490,16 @@ func awsClient() (*ecr.ECR, error) {
 		if endpoint.Host == "" || endpoint.User != nil {
 			return nil, fmt.Errorf("AWS_ECR_ENDPOINT_URL must include a host and must not contain user information")
 		}
-		config = config.
-			WithEndpoint(strings.TrimRight(endpoint.String(), "/")).
-			WithDisableSSL(endpoint.Scheme == "http")
+		baseEndpoint := strings.TrimRight(endpoint.String(), "/")
+		clientOptions = append(clientOptions, func(options *ecr.Options) {
+			options.BaseEndpoint = aws.String(baseEndpoint)
+		})
 	}
 
-	awsSession := session.New(config)
 	if roleArn := strings.TrimSpace(os.Getenv("AWS_ROLE_ARN")); roleArn != "" {
 		log.Print("[awsClient] Assuming the configured AWS role")
-		config = config.WithCredentials(stscreds.NewCredentials(awsSession, roleArn))
-		awsSession = session.New(config)
+		provider := stscreds.NewAssumeRoleProvider(sts.NewFromConfig(config), roleArn)
+		config.Credentials = aws.NewCredentialsCache(provider)
 	}
-	return ecr.New(awsSession), nil
+	return ecr.NewFromConfig(config, clientOptions...), nil
 }

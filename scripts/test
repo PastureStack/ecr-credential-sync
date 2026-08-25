@@ -5,8 +5,8 @@ cd $(dirname $0)/..
 
 echo Running tests
 
-PACKAGES=$(go list ./... | grep -Ev '(/vendor/|/mocks$)' || true)
+PACKAGES=$(go list -mod=vendor ./... | grep -Ev '(/vendor/|/mocks$)' || true)
 RACE=${RACE:-}
 
 [ "${ARCH}" == "amd64" ] && RACE=-race
-go test ${RACE} -cover -tags=test ${PACKAGES}
+go test -mod=vendor ${RACE} -cover -tags=test ${PACKAGES}

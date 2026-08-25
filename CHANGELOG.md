@@ -17,7 +17,11 @@
   AWS-compatible services.
 - Run the Ubuntu 26.04 runtime as unprivileged user `10001:10001`.
 - Package all tracked vendored license, notice, and author files.
-- Build and test with Go 1.26.5 and checksum-verified tool archives.
+- Build and test with Go 1.27.0 and checksum-verified tool archives.
+- Replace the end-of-life AWS SDK for Go v1 with the official AWS SDK for Go v2
+  ECR, STS, configuration, and credential modules.
+- Upgrade `golang.org/x/sys` to `v0.47.0`, closing the source-SBOM finding for
+  CVE-2026-39824.
 
 ## v1.2.0 (2017/03/12)
 

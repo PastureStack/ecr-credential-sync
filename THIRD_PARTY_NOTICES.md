@@ -8,25 +8,18 @@ against the historical `github.com/rancher/go-rancher` client at commit
 No generated source from that client is included in the current tree or
 claimed as PastureStack-authored work.
 
-The source tree retains ten vendored legal files covering the runtime and test
-dependencies present in the preserved upstream source:
+The source tree retains 27 vendored legal files covering the runtime and test
+dependencies selected by `vendor/modules.txt`:
 
-- AWS SDK for Go: `LICENSE.txt` and `NOTICE.txt`.
-- go-spew: `LICENSE`.
-- go-ini: `LICENSE`.
-- Gorilla WebSocket: `AUTHORS` and `LICENSE`.
-- go-jmespath: `LICENSE`.
+- AWS SDK for Go v2 modules: their `LICENSE.txt`, `NOTICE.txt`, and internal
+  singleflight license files.
+- AWS Smithy for Go: `LICENSE`, `NOTICE`, and its internal singleflight license.
 - Logrus: `LICENSE`.
-- objx: `LICENSE.md`.
-- try: `LICENSE`.
+- Testify, objx, and their internal difflib and spew packages: `LICENSE` files.
+- YAML v3: `LICENSE` and `NOTICE`.
+- Go `x/sys`: `LICENSE`.
 
-The container packaging gate copies all ten files under
+The container packaging gate copies all 27 files under
 `/licenses/third-party/` without replacing their text. Test-only dependencies
 that are not linked into the runtime binary retain their source-tree legal
 files where present.
-
-The vendored Logrus `v0.10.0` source carries the narrowly scoped final
-`v1.9.3` `Writer` scanner remediation from upstream commits
-`6acd903758687c4a3db3c11701e6c414fcf1c1f7` and
-`d40e25cd45ed9c6b2b66e6b97573a0413e4c23bd`; its existing MIT notice remains
-unchanged.

@@ -108,11 +108,12 @@ while IFS= read -r legal_file; do
   install -D -m 0644 "../${legal_file}" "$target"
   legal_count=$((legal_count + 1))
 done < <(
-  git -C .. ls-files 'vendor/**' |
-    grep -E '(^|/)(LICENSE[^/]*|NOTICE[^/]*|AUTHORS[^/]*)$' |
+  find ../vendor -type f \
+    \( -name 'LICENSE*' -o -name 'NOTICE*' -o -name 'AUTHORS*' \) -print |
+    sed 's#^../##' |
     LC_ALL=C sort
 )
-test "$legal_count" -eq 10
+test "$legal_count" -eq 27
 
 if [ "$SOURCE_DATE_EPOCH" -gt "$(date -u +%s)" ]; then
   printf 'SOURCE_DATE_EPOCH is in the future: %s\n' "$SOURCE_DATE_EPOCH" >&2

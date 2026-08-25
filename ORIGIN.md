@@ -23,7 +23,7 @@ only for changes they make and record in the preserved Git history.
 - Vendored dependencies remain under their respective licenses. Their license,
   copyright, author, and notice files must remain with redistributed source and
   artifacts where required.
-- The vendored AWS SDK includes its own notice material; it must not be removed
+- The vendored AWS SDK for Go v2 includes its own notice material; it must not be removed
   merely because the root project uses Apache License 2.0.
 - Modified files identify PastureStack maintenance changes. Git history remains
   the authoritative record of who changed each line and when.

@@ -10,6 +10,7 @@ rm -rf bin/*
 
 mkdir -p bin
 CGO_ENABLED=0 go build \
+    -mod=vendor \
     -trimpath \
     -buildvcs=false \
     -ldflags "-buildid= -X main.VERSION=$VERSION -s -w" \
@@ -30,6 +31,7 @@ if [ -n "${CROSS:-}" ]; then
             fi
             echo "Building binary for $OS/$ARCH..."
             GOARCH=$ARCH GOOS=$OS CGO_ENABLED=0 go build \
+                  -mod=vendor \
                   -trimpath \
                   -buildvcs=false \
                   -ldflags="-buildid= -X main.VERSION=$VERSION -s -w" \

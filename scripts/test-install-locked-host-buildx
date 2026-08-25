@@ -62,7 +62,7 @@ case "${1-}" in
     ;;
   version)
     if [ "$#" -eq 1 ]; then
-      printf 'go version go1.26.6 linux/amd64\n'
+      printf 'go version go1.27.0 linux/amd64\n'
       exit 0
     fi
     if [ "$#" -eq 3 ] && [ "$2" = -m ]; then
@@ -72,7 +72,7 @@ case "${1-}" in
         cve-2026-17106) go_archive=v0.2.1 ;;
         cve-2026-56864|cve-2026-56865) x_mod=v0.38.0 ;;
       esac
-      printf '%s: go1.26.6\n' "$3"
+      printf '%s: go1.27.0\n' "$3"
       printf '\tpath\tgithub.com/docker/buildx/cmd/buildx\n'
       printf '\tmod\tgithub.com/docker/buildx\t(devel)\t\n'
       printf '\tdep\tgithub.com/moby/go-archive\t%s\t\n' "$go_archive"
@@ -190,7 +190,7 @@ while [ "$#" -gt 0 ]; do
 done
 [ -n "$output" ] && [ -n "$url" ]
 case "$url" in
-  https://go.dev/dl/go1.26.6.linux-amd64.tar.gz)
+  https://go.dev/dl/go1.27.0.linux-amd64.tar.gz)
     cp -- "$FIXTURE_GO_ARCHIVE" "$output"
     ;;
   https://codeload.github.com/docker/buildx/tar.gz/1d8dde89b8aba914e05e45366770736fea1fd690)
@@ -276,7 +276,7 @@ test "$(stat -c '%a' "$installed_path")" = 555
 test "$("$installed_path" version)" = \
   'github.com/docker/buildx v0.36.1 1d8dde89b8aba914e05e45366770736fea1fd690'
 bash "${fixture_repo}/scripts/check-buildx-module-versions" \
-  "${fixture_destination}/buildx-go-version.txt" go1.26.6 v0.3.0 v0.40.0 >/dev/null
+  "${fixture_destination}/buildx-go-version.txt" go1.27.0 v0.3.0 v0.40.0 >/dev/null
 test "$(grep -Fc $'binary\tbuildx-first\tv0.36.1\t' "${fixture_destination}/buildx-build.tsv")" -eq 1
 test "$(grep -Fc $'binary\tbuildx-second\tv0.36.1\t' "${fixture_destination}/buildx-build.tsv")" -eq 1
 test "$(find "$fixture_destination" -mindepth 1 -maxdepth 1 -printf '%f\n' | LC_ALL=C sort)" = \

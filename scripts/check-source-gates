@@ -200,9 +200,9 @@ brand_source_has_forbidden_reference() {
     ':(top,exclude)UNOFFICIAL_MAINTENANCE_FORK.md'
 }
 
-require_marker Dockerfile.dapper 'ARG GO_VERSION=1.26.6' ECR_SYNC_GO_VERSION_NOT_CURRENT
-require_marker Dockerfile.dapper 'ARG GO_LINUX_AMD64_SHA256=708effb774be8237570d0add163225abbdfaf4fca28b2611df167beba4feef89' ECR_SYNC_GO_AMD64_SHA_MISSING
-require_marker Dockerfile.dapper 'ARG GO_LINUX_ARM64_SHA256=d0507e9e9d7fe012aae570108cbd76c15de879e17130ab8cb90d4d7445cb1f2e' ECR_SYNC_GO_ARM64_SHA_MISSING
+require_marker Dockerfile.dapper 'ARG GO_VERSION=1.27.0' ECR_SYNC_GO_VERSION_NOT_CURRENT
+require_marker Dockerfile.dapper 'ARG GO_LINUX_AMD64_SHA256=675c26c449cbb18fc24b74650de1eabbae6e16f64326fd85a283fb3b58280685' ECR_SYNC_GO_AMD64_SHA_MISSING
+require_marker Dockerfile.dapper 'ARG GO_LINUX_ARM64_SHA256=51798d2c42d0e1c6ed7fd9f48728b4193abac9e8aad6dbac2fe96a81f5909bda' ECR_SYNC_GO_ARM64_SHA_MISSING
 require_marker Dockerfile.dapper 'XDG_CONFIG_HOME=/tmp/go-config' ECR_SYNC_GO_TELEMETRY_CONFIG_ROOT_MISSING
 require_marker Dockerfile.dapper 'telemetry_root=/tmp/go-config/go/telemetry' ECR_SYNC_GO_TELEMETRY_ROOT_MISSING
 require_marker Dockerfile.dapper '/usr/local/go/bin/go telemetry off' ECR_SYNC_GO_TELEMETRY_OFF_COMMAND_MISSING
@@ -238,7 +238,7 @@ require_marker Dockerfile.dapper 'ARG BUILDX_VERSION=0.36.1' ECR_SYNC_BUILDX_VER
 require_marker Dockerfile.dapper 'ARG BUILDX_GIT_COMMIT=1d8dde89b8aba914e05e45366770736fea1fd690' ECR_SYNC_BUILDX_COMMIT_MISSING
 require_marker Dockerfile.dapper 'ARG BUILDX_SOURCE_DATE_EPOCH=1785856317' ECR_SYNC_BUILDX_EPOCH_MISSING
 require_marker Dockerfile.dapper 'ARG BUILDX_SOURCE_SHA256=fb28b5c2a198d05482f0656dfb7ee161240a904e36697bf7108e5d517f23854b' ECR_SYNC_BUILDX_SOURCE_SHA_MISSING
-require_marker Dockerfile.dapper 'ARG BUILDX_SECURITY_PATCH_SHA256=b615fea76706a4c16e2af354b3a92d7b8b0465dce4f2d2c20b7a87bdc3100ad2' ECR_SYNC_BUILDX_PATCH_SHA_MISSING
+require_marker Dockerfile.dapper 'ARG BUILDX_SECURITY_PATCH_SHA256=a29fdda204d592d0d46ed32b5fdc4336a7b3a7276301836d0a75b9386ca780f7' ECR_SYNC_BUILDX_PATCH_SHA_MISSING
 require_marker Dockerfile.dapper 'ARG BUILDX_GO_ARCHIVE_VERSION=v0.3.0' ECR_SYNC_BUILDX_GO_ARCHIVE_VERSION_MISSING
 require_marker Dockerfile.dapper 'ARG BUILDX_X_MOD_VERSION=v0.40.0' ECR_SYNC_BUILDX_X_MOD_VERSION_MISSING
 require_marker Dockerfile.dapper '-X github.com/docker/buildx/version.Version=v${BUILDX_VERSION}' ECR_SYNC_BUILDX_EXECUTABLE_VERSION_PRODUCER_MISSING
@@ -401,7 +401,7 @@ require_marker package/Dockerfile 'runtime-ubuntu-packages.tsv' ECR_SYNC_RUNTIME
 require_marker package/Dockerfile 'ca-certificates="${UBUNTU_APT_CA_CERTIFICATES_VERSION}"' ECR_SYNC_RUNTIME_APT_NOT_PINNED
 reject_marker package/Dockerfile 'apt-get -y upgrade' ECR_SYNC_RUNTIME_ROLLING_UPGRADE_PRESENT
 require_marker package/windows/amd64/Dockerfile 'mcr.microsoft.com/windows/nanoserver:ltsc2022@sha256:e4ce8c20390c3785c3cbeef15c579d186b3599d37525c596590cf4508e38d3ff' ECR_SYNC_WINDOWS_BASE_NOT_PINNED
-require_marker scripts/package 'test "$legal_count" -eq 10' ECR_SYNC_LEGAL_COUNT_GATE_MISSING
+require_marker scripts/package 'test "$legal_count" -eq 27' ECR_SYNC_LEGAL_COUNT_GATE_MISSING
 require_marker scripts/package 'export SOURCE_DATE_EPOCH' ECR_SYNC_SOURCE_DATE_EPOCH_MISSING
 require_marker scripts/package 'normalize-runtime-context-mtimes' ECR_SYNC_RUNTIME_CONTEXT_MTIME_NORMALIZER_MISSING
 require_marker scripts/package 'build-runtime-image" build' ECR_SYNC_RUNTIME_EXPORT_HELPER_MISSING
@@ -451,7 +451,7 @@ if ! (
   test "$(git check-attr whitespace -- toolchain/buildx-security.patch)" = \
     'toolchain/buildx-security.patch: whitespace: unset'
   test "$(sha256sum -- toolchain/buildx-security.patch | awk '{print $1}')" = \
-    'b615fea76706a4c16e2af354b3a92d7b8b0465dce4f2d2c20b7a87bdc3100ad2'
+    'a29fdda204d592d0d46ed32b5fdc4336a7b3a7276301836d0a75b9386ca780f7'
   git diff --check
 ); then
   printf 'ECR_SYNC_BUILDX_EMBEDDED_PATCH_BOUNDARY_INVALID\n' >&2
@@ -651,15 +651,15 @@ if ! (
     test "${HOST_BUILDX_SOURCE_URL-}" = 'https://codeload.github.com/docker/buildx/tar.gz/1d8dde89b8aba914e05e45366770736fea1fd690' &&
     test "${HOST_BUILDX_SOURCE_SHA256-}" = 'fb28b5c2a198d05482f0656dfb7ee161240a904e36697bf7108e5d517f23854b' &&
     test "${HOST_BUILDX_SECURITY_PATCH_PATH-}" = 'toolchain/buildx-security.patch' &&
-    test "${HOST_BUILDX_SECURITY_PATCH_SHA256-}" = 'b615fea76706a4c16e2af354b3a92d7b8b0465dce4f2d2c20b7a87bdc3100ad2' &&
-    test "${HOST_BUILDX_GO_VERSION-}" = '1.26.6' &&
+    test "${HOST_BUILDX_SECURITY_PATCH_SHA256-}" = 'a29fdda204d592d0d46ed32b5fdc4336a7b3a7276301836d0a75b9386ca780f7' &&
+    test "${HOST_BUILDX_GO_VERSION-}" = '1.27.0' &&
     test "${HOST_BUILDX_GO_PLATFORM-}" = 'linux-amd64' &&
-    test "${HOST_BUILDX_GO_FILENAME-}" = 'go1.26.6.linux-amd64.tar.gz' &&
-    test "${HOST_BUILDX_GO_URL-}" = 'https://go.dev/dl/go1.26.6.linux-amd64.tar.gz' &&
-    test "${HOST_BUILDX_GO_SHA256-}" = '708effb774be8237570d0add163225abbdfaf4fca28b2611df167beba4feef89' &&
+    test "${HOST_BUILDX_GO_FILENAME-}" = 'go1.27.0.linux-amd64.tar.gz' &&
+    test "${HOST_BUILDX_GO_URL-}" = 'https://go.dev/dl/go1.27.0.linux-amd64.tar.gz' &&
+    test "${HOST_BUILDX_GO_SHA256-}" = '675c26c449cbb18fc24b74650de1eabbae6e16f64326fd85a283fb3b58280685' &&
     test "${HOST_BUILDX_GO_ARCHIVE_VERSION-}" = 'v0.3.0' &&
     test "${HOST_BUILDX_X_MOD_VERSION-}" = 'v0.40.0' &&
-    test "${HOST_BUILDX_BINARY_SHA256-}" = 'ebb6935c31ef883684ec1721be8cc7e5d0386e5a445e90b7e81c7c8f5dac991d' &&
+    test "${HOST_BUILDX_BINARY_SHA256-}" = '6bd2cb8809abf99fd2a0acaf50a51b85e9a4b254cc9bfede6305e85f42c59eb2' &&
     test "${HOST_BUILDKIT_VERSION-}" = 'v0.32.2' &&
     test "${HOST_BUILDKIT_IMAGE-}" = 'moby/buildkit:v0.32.2@sha256:28a898719c18a33f4e8000685287fa36fd0dd9560c6440227d3a732d79bb41d8' &&
     test "${HOST_BUILDX_INSTALL_METHOD-}" = 'repository-locked-offline-source-builder' &&
@@ -679,7 +679,7 @@ for package_key in BASH CA_CERTIFICATES CURL GCC GIT JQ LIBC6_DEV MAKE TAR XZ_UT
 done
 
 require_marker .github/workflows/repository-integrity.yml \
-  'PastureStack/.github/.github/workflows/repository-integrity.yml@86986b855e3cde8bab6b5221407417365ef138a4' \
+  'PastureStack/.github/.github/workflows/repository-integrity.yml@0830b344f020bcb7792a112c376bbfac48e63fa5' \
   ECR_SYNC_REPOSITORY_INTEGRITY_NOT_PINNED
 require_marker .github/workflows/supply-chain.yml \
   'aquasec/trivy:0.74.0@sha256:62b1e65e8869bc4b4c6aa4fa2b21595256c7c2f6018a9d9ad61caf87187c1969' \
@@ -740,7 +740,7 @@ require_marker .github/workflows/supply-chain.yml 'runtime-image-first-build.jso
 require_marker .github/workflows/supply-chain.yml 'runtime-image-second-build.json' ECR_SYNC_RUNTIME_SECOND_EXPORT_EVIDENCE_MISSING
 require_marker .github/workflows/supply-chain.yml 'select(.name == "pasturestack:runtime-image-export")' ECR_SYNC_SOURCE_SBOM_RUNTIME_EXPORT_GATE_MISSING
 require_marker .github/workflows/supply-chain.yml 'diff -u toolchain/buildx-security.patch evidence/buildx-security.patch' ECR_SYNC_BUILDX_PATCH_EVIDENCE_MISSING
-require_marker .github/workflows/supply-chain.yml 'b615fea76706a4c16e2af354b3a92d7b8b0465dce4f2d2c20b7a87bdc3100ad2  evidence/buildx-security.patch' ECR_SYNC_BUILDX_EVIDENCE_SHA_MISSING
+require_marker .github/workflows/supply-chain.yml 'a29fdda204d592d0d46ed32b5fdc4336a7b3a7276301836d0a75b9386ca780f7  evidence/buildx-security.patch' ECR_SYNC_BUILDX_EVIDENCE_SHA_MISSING
 require_marker .github/workflows/supply-chain.yml 'pkg:golang/github.com/moby/go-archive@v0.3.0' ECR_SYNC_BUILDX_GO_ARCHIVE_SBOM_GATE_MISSING
 require_marker .github/workflows/supply-chain.yml 'pkg:golang/golang.org/x/mod@v0.40.0' ECR_SYNC_BUILDX_X_MOD_SBOM_GATE_MISSING
 require_marker .github/workflows/supply-chain.yml 'pkg:golang/github.com/moby/go-archive@v0.2.1' ECR_SYNC_BUILDX_GO_ARCHIVE_SBOM_REGRESSION_GATE_MISSING
@@ -829,7 +829,9 @@ require_marker scripts/entry 'chown -R "$uid:$gid" "${outputs[@]}"' ECR_SYNC_TAR
 reject_marker scripts/entry 'chown -R $DAPPER_UID:$DAPPER_GID .' ECR_SYNC_CHECKOUT_WIDE_CHOWN_PRESENT
 reject_marker scripts/entry 'exec "$@"' ECR_SYNC_ENTRY_EXEC_BYPASSES_CLEANUP
 reject_marker .github/workflows/supply-chain.yml 'sudo rm' ECR_SYNC_PRIVILEGED_CLEANUP_PRESENT
-require_marker scripts/generate-source-sbom.py 'vendor lock contains no versioned dependencies' ECR_SYNC_VENDOR_SBOM_GENERATOR_MISSING
+require_marker scripts/generate-source-sbom.py 'vendor module manifest contains no versioned dependencies' ECR_SYNC_VENDOR_SBOM_GENERATOR_MISSING
+require_marker scripts/generate-source-sbom.py 'vendor/modules.txt' ECR_SYNC_VENDOR_SBOM_LOCK_MISSING
+require_marker scripts/generate-source-sbom.py '"dependencies"' ECR_SYNC_SOURCE_SBOM_DEPENDENCY_GRAPH_MISSING
 require_marker scripts/generate-source-sbom.py 'replace("\r\n", "\n")' ECR_SYNC_VENDOR_SBOM_LINE_ENDINGS_NOT_CANONICAL
 require_marker scripts/generate-source-sbom.py 'pasturestack:host-buildx-version' ECR_SYNC_SOURCE_SBOM_HOST_BUILDX_MISSING
 require_marker scripts/generate-source-sbom.py 'pasturestack:host-buildx-commit' ECR_SYNC_SOURCE_SBOM_HOST_BUILDX_COMMIT_MISSING
@@ -859,49 +861,57 @@ require_marker README.md 'moby/buildkit:v0.32.2@sha256:28a898719c18a33f4e8000685
 require_marker README.md 'scripts/install-locked-host-buildx' ECR_SYNC_LOCKED_HOST_BUILDX_DOC_MISSING
 require_marker README.md '`DOCKER_CONFIG`' ECR_SYNC_HOST_BUILDX_DOCKER_CONFIG_DOC_MISSING
 require_marker README.md 'fb28b5c2a198d05482f0656dfb7ee161240a904e36697bf7108e5d517f23854b' ECR_SYNC_LOCKED_HOST_BUILDX_SOURCE_README_DIGEST_MISSING
-require_marker README.md 'b615fea76706a4c16e2af354b3a92d7b8b0465dce4f2d2c20b7a87bdc3100ad2' ECR_SYNC_LOCKED_HOST_BUILDX_PATCH_README_DIGEST_MISSING
-require_marker README.md 'ebb6935c31ef883684ec1721be8cc7e5d0386e5a445e90b7e81c7c8f5dac991d' ECR_SYNC_LOCKED_HOST_BUILDX_BINARY_README_DIGEST_MISSING
+require_marker README.md 'a29fdda204d592d0d46ed32b5fdc4336a7b3a7276301836d0a75b9386ca780f7' ECR_SYNC_LOCKED_HOST_BUILDX_PATCH_README_DIGEST_MISSING
+require_marker README.md '6bd2cb8809abf99fd2a0acaf50a51b85e9a4b254cc9bfede6305e85f42c59eb2' ECR_SYNC_LOCKED_HOST_BUILDX_BINARY_README_DIGEST_MISSING
 require_marker README.md 'upstream has no signed release containing both fixed module versions' ECR_SYNC_LOCKED_HOST_BUILDX_UPSTREAM_DECISION_DOC_MISSING
 require_marker README.md '`jq` `1.8.1-4ubuntu2`' ECR_SYNC_DAPPER_JQ_README_VERSION_MISSING
 require_marker README.md 'CreateNew Docker archive' ECR_SYNC_RUNTIME_EXPORT_README_CONTRACT_MISSING
 require_marker README.md '`go telemetry off`' ECR_SYNC_GO_TELEMETRY_README_CONTRACT_MISSING
 require_marker SECURITY.md 'Buildx IID' ECR_SYNC_DAPPER_IDENTITY_SECURITY_DOC_MISSING
 require_marker SECURITY.md 'fb28b5c2a198d05482f0656dfb7ee161240a904e36697bf7108e5d517f23854b' ECR_SYNC_LOCKED_HOST_BUILDX_SOURCE_SECURITY_DIGEST_MISSING
-require_marker SECURITY.md 'b615fea76706a4c16e2af354b3a92d7b8b0465dce4f2d2c20b7a87bdc3100ad2' ECR_SYNC_LOCKED_HOST_BUILDX_PATCH_SECURITY_DIGEST_MISSING
-require_marker SECURITY.md 'ebb6935c31ef883684ec1721be8cc7e5d0386e5a445e90b7e81c7c8f5dac991d' ECR_SYNC_LOCKED_HOST_BUILDX_BINARY_SECURITY_DIGEST_MISSING
+require_marker SECURITY.md 'a29fdda204d592d0d46ed32b5fdc4336a7b3a7276301836d0a75b9386ca780f7' ECR_SYNC_LOCKED_HOST_BUILDX_PATCH_SECURITY_DIGEST_MISSING
+require_marker SECURITY.md '6bd2cb8809abf99fd2a0acaf50a51b85e9a4b254cc9bfede6305e85f42c59eb2' ECR_SYNC_LOCKED_HOST_BUILDX_BINARY_SECURITY_DIGEST_MISSING
 require_marker SECURITY.md 'no signed fixed release exists' ECR_SYNC_LOCKED_HOST_BUILDX_UPSTREAM_SECURITY_DECISION_MISSING
 require_marker SECURITY.md '`jq` `1.8.1-4ubuntu2`' ECR_SYNC_DAPPER_JQ_SECURITY_VERSION_MISSING
 require_marker SECURITY.md 'archive hash' ECR_SYNC_RUNTIME_EXPORT_SECURITY_CONTRACT_MISSING
 require_marker SECURITY.md '`off YYYY-MM-DD`' ECR_SYNC_GO_TELEMETRY_SECURITY_CONTRACT_MISSING
-require_marker security/openvex.json '"status": "fixed"' ECR_SYNC_SOURCE_VEX_FIXED_STATUS_MISSING
-require_marker security/openvex.json '"status": "not_affected"' ECR_SYNC_SOURCE_VEX_NOT_AFFECTED_STATUS_MISSING
-require_marker security/openvex.json '"justification": "vulnerable_code_not_present"' ECR_SYNC_SOURCE_VEX_JUSTIFICATION_MISSING
-require_marker security/openvex.json 'pkg:golang/github.com/aws/aws-sdk-go@v1.8.0' ECR_SYNC_AWS_SDK_VEX_PRODUCT_MISSING
-require_marker security/openvex.json '6acd903758687c4a3db3c11701e6c414fcf1c1f7' ECR_SYNC_LOGRUS_FIX_PROVENANCE_MISSING
-require_marker security/openvex.json 'd40e25cd45ed9c6b2b66e6b97573a0413e4c23bd' ECR_SYNC_LOGRUS_PANIC_FIX_PROVENANCE_MISSING
-reject_marker security/openvex.json 'CVE-2026-17106' ECR_SYNC_BUILDX_GO_ARCHIVE_CVE_VEX_PRESENT
-reject_marker security/openvex.json 'CVE-2026-56864' ECR_SYNC_BUILDX_X_MOD_FIRST_CVE_VEX_PRESENT
-reject_marker security/openvex.json 'CVE-2026-56865' ECR_SYNC_BUILDX_X_MOD_SECOND_CVE_VEX_PRESENT
+require_marker go.mod 'go 1.27.0' ECR_SYNC_GO_VERSION_MISSING
+require_marker go.mod 'github.com/aws/aws-sdk-go-v2 v1.43.7' ECR_SYNC_AWS_SDK_V2_CORE_MISSING
+require_marker go.mod 'github.com/aws/aws-sdk-go-v2/config v1.32.38' ECR_SYNC_AWS_SDK_V2_CONFIG_MISSING
+require_marker go.mod 'github.com/aws/aws-sdk-go-v2/credentials v1.19.37' ECR_SYNC_AWS_SDK_V2_CREDENTIALS_MISSING
+require_marker go.mod 'github.com/aws/aws-sdk-go-v2/service/ecr v1.60.7' ECR_SYNC_AWS_SDK_V2_ECR_MISSING
+require_marker go.mod 'github.com/aws/aws-sdk-go-v2/service/sts v1.45.7' ECR_SYNC_AWS_SDK_V2_STS_MISSING
+require_marker go.mod 'github.com/sirupsen/logrus v1.10.1' ECR_SYNC_LOGRUS_CURRENT_MISSING
+require_marker go.mod 'golang.org/x/sys v0.47.0' ECR_SYNC_X_SYS_CURRENT_MISSING
+reject_marker go.mod 'github.com/aws/aws-sdk-go v1.' ECR_SYNC_AWS_SDK_V1_MODULE_PRESENT
+if [ -e vendor.conf ] || [ -L vendor.conf ]; then
+  printf 'ECR_SYNC_LEGACY_VENDOR_CONF_PRESENT\n' >&2
+  failure_count=$((failure_count + 1))
+fi
+if [ -e security/openvex.json ] || [ -L security/openvex.json ]; then
+  printf 'ECR_SYNC_OBSOLETE_SOURCE_VEX_PRESENT\n' >&2
+  failure_count=$((failure_count + 1))
+fi
 require_marker logrus_writer_security_test.go '128*1024' ECR_SYNC_LOGRUS_LARGE_LINE_REGRESSION_MISSING
 require_marker logrus_writer_security_test.go 'TestVendoredLogrusWriterPreservesLineBoundaries' ECR_SYNC_LOGRUS_LINE_BEHAVIOR_REGRESSION_MISSING
 reject_marker .github/workflows/supply-chain.yml 'docker push' ECR_SYNC_WORKFLOW_CAN_PUBLISH
 reject_marker .github/workflows/supply-chain.yml 'docker/login-action' ECR_SYNC_WORKFLOW_CAN_LOGIN
 
-if [ -e vendor/github.com/aws/aws-sdk-go/service/s3/s3crypto ]; then
-  printf 'ECR_SYNC_VULNERABLE_S3_CRYPTO_PACKAGE_VENDORED\n' >&2
+if [ -e vendor/github.com/aws/aws-sdk-go ] || [ -L vendor/github.com/aws/aws-sdk-go ]; then
+  printf 'ECR_SYNC_AWS_SDK_V1_VENDOR_PRESENT\n' >&2
   failure_count=$((failure_count + 1))
 fi
 
-if grep -RInF --include='*.go' --exclude-dir=vendor \
-  'github.com/aws/aws-sdk-go/service/s3/s3crypto' . >/dev/null; then
-  printf 'ECR_SYNC_VULNERABLE_S3_CRYPTO_PACKAGE_IMPORTED\n' >&2
+if grep -RInE --include='*.go' --exclude-dir=vendor \
+  'github\.com/aws/aws-sdk-go(/|$)' . >/dev/null; then
+  printf 'ECR_SYNC_AWS_SDK_V1_IMPORTED\n' >&2
   failure_count=$((failure_count + 1))
 fi
 
 require_marker .github/workflows/supply-chain.yml \
   'source-go-dependencies.txt' ECR_SYNC_SOURCE_DEPENDENCY_EVIDENCE_MISSING
 require_marker .github/workflows/supply-chain.yml \
-  'github.com/aws/aws-sdk-go/service/s3/s3crypto' ECR_SYNC_S3_CRYPTO_REACHABILITY_GATE_MISSING
+  'github.com/aws/aws-sdk-go($|/)' ECR_SYNC_AWS_SDK_V1_REACHABILITY_GATE_MISSING
 
 while IFS= read -r workflow; do
   if grep -E '^[[:space:]]*uses:' "$workflow" |
@@ -917,12 +927,12 @@ if [ -e .drone.yml ]; then
 fi
 
 legal_count=$(
-  git ls-files 'vendor/**' |
-    grep -E '(^|/)(LICENSE[^/]*|NOTICE[^/]*|AUTHORS[^/]*)$' |
+  find vendor -type f \
+    \( -name 'LICENSE*' -o -name 'NOTICE*' -o -name 'AUTHORS*' \) -print |
     wc -l
 )
-if [ "$legal_count" -ne 10 ]; then
-  printf 'ECR_SYNC_LEGAL_FILE_COUNT_MISMATCH count=%s expected=10\n' "$legal_count" >&2
+if [ "$legal_count" -ne 27 ]; then
+  printf 'ECR_SYNC_LEGAL_FILE_COUNT_MISMATCH count=%s expected=27\n' "$legal_count" >&2
   failure_count=$((failure_count + 1))
 fi
 
@@ -1006,5 +1016,5 @@ if [ "$failure_count" -ne 0 ]; then
   exit 1
 fi
 
-printf 'ECR_SYNC_SOURCE_GATES_OK go=1.26.6 go_telemetry=off-source-date-epoch-utc go_telemetry_readbacks=5 go_telemetry_cleanup_cwd=two-callers-explicit-root-before-delete docker=29.7.2 docker_cli_source_built=go1.26.6 buildx=0.36.1 dapper_buildx_executable_version=v0.36.1 buildx_go_archive=v0.3.0 buildx_x_mod=v0.40.0 buildx_cves_fixed=3 buildx_patch=sha256:b615fea76706a4c16e2af354b3a92d7b8b0465dce4f2d2c20b7a87bdc3100ad2 jq=1.8.1 jq_package=1.8.1-4ubuntu2 host_buildx=0.36.1 host_buildx_binary=sha256:ebb6935c31ef883684ec1721be8cc7e5d0386e5a445e90b7e81c7c8f5dac991d host_buildx_builds=2-offline-reproducible host_buildkit=0.32.2 buildkit_version_readback=exact-single-record dapper_identity=buildx-iid+metadata-config+daemon-config-or-manifest ubuntu=26.04 snapshot=20260808T000000Z non_root=1 legal_files=%s endpoint_override=bounded brand_gate=tracked_source_only runtime_manifest_access=default-user-read-only buildx_legacy_module_removed=1 embedded_patch_whitespace_scope=exact-path-with-inner-validation runtime_mtime_normalization=all_local_copy_inputs dapper_reproducibility=buildkit-rewrite-timestamp runtime_export=docker-archive-explicit-load runtime_builder=exact-run-owned-pinned sbom_trivy_gate=1\n' \
+printf 'ECR_SYNC_SOURCE_GATES_OK go=1.27.0 go_telemetry=off-source-date-epoch-utc go_telemetry_readbacks=5 go_telemetry_cleanup_cwd=two-callers-explicit-root-before-delete docker=29.7.2 docker_cli_source_built=go1.27.0 buildx=0.36.1 dapper_buildx_executable_version=v0.36.1 buildx_go_archive=v0.3.0 buildx_x_mod=v0.40.0 buildx_cves_fixed=3 buildx_patch=sha256:a29fdda204d592d0d46ed32b5fdc4336a7b3a7276301836d0a75b9386ca780f7 jq=1.8.1 jq_package=1.8.1-4ubuntu2 host_buildx=0.36.1 host_buildx_binary=sha256:6bd2cb8809abf99fd2a0acaf50a51b85e9a4b254cc9bfede6305e85f42c59eb2 host_buildx_builds=2-offline-reproducible host_buildkit=0.32.2 buildkit_version_readback=exact-single-record dapper_identity=buildx-iid+metadata-config+daemon-config-or-manifest ubuntu=26.04 snapshot=20260808T000000Z non_root=1 legal_files=%s endpoint_override=bounded brand_gate=tracked_source_only runtime_manifest_access=default-user-read-only buildx_legacy_module_removed=1 embedded_patch_whitespace_scope=exact-path-with-inner-validation runtime_mtime_normalization=all_local_copy_inputs dapper_reproducibility=buildkit-rewrite-timestamp runtime_export=docker-archive-explicit-load runtime_builder=exact-run-owned-pinned sbom_trivy_gate=1\n' \
   "$legal_count"

@@ -16,9 +16,11 @@ import (
 
 	"github.com/PastureStack/ecr-credential-sync/internal/platformapi"
 	"github.com/PastureStack/ecr-credential-sync/mocks"
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/service/ecr"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/ecr"
+	"github.com/aws/aws-sdk-go-v2/service/ecr/types"
 	log "github.com/sirupsen/logrus"
+	"github.com/stretchr/testify/mock"
 )
 
 func TestMain_basic(t *testing.T) {
@@ -26,10 +28,10 @@ func TestMain_basic(t *testing.T) {
 	mockEcr := new(mocks.ECRAPI)
 	mockRegistry := new(mocks.RegistryOperations)
 	mockRegistryCredential := new(mocks.RegistryCredentialOperations)
-	mockEcr.On("GetAuthorizationToken", &ecr.GetAuthorizationTokenInput{}).Return(
+	mockEcr.On("GetAuthorizationToken", mock.Anything, &ecr.GetAuthorizationTokenInput{}).Return(
 		&ecr.GetAuthorizationTokenOutput{
-			AuthorizationData: []*ecr.AuthorizationData{
-				&ecr.AuthorizationData{
+			AuthorizationData: []types.AuthorizationData{
+				{
 					ProxyEndpoint:      aws.String("https://012345678910.dkr.ecr.us-east-1.amazonaws.com"),
 					AuthorizationToken: aws.String(base64.StdEncoding.EncodeToString([]byte("mockUser:mockPassword"))),
 				},
@@ -81,7 +83,7 @@ func TestProcessTokenRedactsMalformedAuthorizationToken(t *testing.T) {
 
 	secretToken := "mockUserWithoutPasswordSecret"
 	platform := &Platform{}
-	platform.processToken(&ecr.AuthorizationData{
+	platform.processToken(&types.AuthorizationData{
 		ProxyEndpoint:      aws.String("https://012345678910.dkr.ecr.us-east-1.amazonaws.com"),
 		AuthorizationToken: aws.String(base64.StdEncoding.EncodeToString([]byte(secretToken))),
 	}, nil, nil)
@@ -102,7 +104,7 @@ func TestProcessTokenRejectsCredentialBearingProxyEndpointWithoutLoggingIt(t *te
 
 	secret := "proxy-url-secret"
 	platform := &Platform{}
-	err := platform.processToken(&ecr.AuthorizationData{
+	err := platform.processToken(&types.AuthorizationData{
 		ProxyEndpoint:      aws.String("https://user:" + secret + "@registry.example.test"),
 		AuthorizationToken: aws.String(base64.StdEncoding.EncodeToString([]byte("AWS:token"))),
 	}, nil, nil)
@@ -121,10 +123,10 @@ func TestProcessTokenHandlesMissingAuthorizationFields(t *testing.T) {
 
 	platform := &Platform{}
 	platform.processToken(nil, nil, nil)
-	platform.processToken(&ecr.AuthorizationData{
+	platform.processToken(&types.AuthorizationData{
 		ProxyEndpoint: aws.String("https://012345678910.dkr.ecr.us-east-1.amazonaws.com"),
 	}, nil, nil)
-	platform.processToken(&ecr.AuthorizationData{
+	platform.processToken(&types.AuthorizationData{
 		AuthorizationToken: aws.String(base64.StdEncoding.EncodeToString([]byte("mockUser:mockPassword"))),
 	}, nil, nil)
 
@@ -147,10 +149,10 @@ func TestMain_autoCreate(t *testing.T) {
 	mockEcr := new(mocks.ECRAPI)
 	mockRegistry := new(mocks.RegistryOperations)
 	mockRegistryCredential := new(mocks.RegistryCredentialOperations)
-	mockEcr.On("GetAuthorizationToken", &ecr.GetAuthorizationTokenInput{}).Return(
+	mockEcr.On("GetAuthorizationToken", mock.Anything, &ecr.GetAuthorizationTokenInput{}).Return(
 		&ecr.GetAuthorizationTokenOutput{
-			AuthorizationData: []*ecr.AuthorizationData{
-				&ecr.AuthorizationData{
+			AuthorizationData: []types.AuthorizationData{
+				{
 					ProxyEndpoint:      aws.String("https://012345678910.dkr.ecr.us-east-1.amazonaws.com"),
 					AuthorizationToken: aws.String(base64.StdEncoding.EncodeToString([]byte("mockUser:mockPassword"))),
 				},

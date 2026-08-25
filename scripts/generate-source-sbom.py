@@ -10,7 +10,7 @@ from pathlib import Path
 import uuid
 
 
-DAPPER_GO_VERSION = "1.26.6"
+DAPPER_GO_VERSION = "1.27.0"
 DAPPER_GO_TELEMETRY_MODE = "off"
 DAPPER_GO_TELEMETRY_DIRECTORY = "/tmp/go-config/go/telemetry"
 DAPPER_GO_TELEMETRY_MODE_DATE_SOURCE = "SOURCE_DATE_EPOCH-UTC"
@@ -56,20 +56,20 @@ UBUNTU_APT_KEYS = (
 )
 
 
-def parse_vendor_lock(path: Path) -> list[tuple[str, str]]:
+def parse_vendor_modules(path: Path) -> list[tuple[str, str]]:
     components: list[tuple[str, str]] = []
     for raw_line in path.read_text(encoding="utf-8").splitlines():
         line = raw_line.strip()
-        if not line or line.startswith("#"):
+        if not line.startswith("# ") or line.startswith("## "):
             continue
-        fields = line.split()
-        if len(fields) == 1:
+        fields = line[2:].split()
+        if "=>" in fields:
+            raise ValueError(f"replaced vendor module is not supported: {raw_line!r}")
+        if len(fields) < 2:
             continue
-        if len(fields) != 2:
-            raise ValueError(f"invalid vendor lock entry: {raw_line!r}")
         components.append((fields[0], fields[1]))
     if not components:
-        raise ValueError("vendor lock contains no versioned dependencies")
+        raise ValueError("vendor module manifest contains no versioned dependencies")
     return components
 
 
@@ -124,7 +124,7 @@ def parse_ubuntu_apt_lock(path: Path) -> tuple[dict[str, str], str]:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--lock", type=Path, default=Path("vendor.conf"))
+    parser.add_argument("--lock", type=Path, default=Path("vendor/modules.txt"))
     parser.add_argument(
         "--host-toolchain-lock",
         type=Path,
@@ -140,7 +140,7 @@ def main() -> int:
 
     lock_text = args.lock.read_text(encoding="utf-8")
     lock_bytes = lock_text.replace("\r\n", "\n").replace("\r", "\n").encode("utf-8")
-    dependencies = parse_vendor_lock(args.lock)
+    dependencies = parse_vendor_modules(args.lock)
     lock_digest = hashlib.sha256(lock_bytes).hexdigest()
     host_toolchain, host_toolchain_digest = parse_host_toolchain_lock(
         args.host_toolchain_lock
@@ -168,7 +168,10 @@ def main() -> int:
                 "version": version,
                 "purl": purl,
                 "properties": [
-                    {"name": "pasturestack:source-lock", "value": "vendor.conf"}
+                    {
+                        "name": "pasturestack:source-lock",
+                        "value": "vendor/modules.txt",
+                    }
                 ],
             }
         )
@@ -188,7 +191,10 @@ def main() -> int:
                 "purl": "pkg:github/PastureStack/ecr-credential-sync@3.1.0",
             },
             "properties": [
-                {"name": "pasturestack:vendor-lock-sha256", "value": lock_digest},
+                {
+                    "name": "pasturestack:go-vendor-modules-sha256",
+                    "value": lock_digest,
+                },
                 {
                     "name": "pasturestack:host-build-toolchain-lock-sha256",
                     "value": host_toolchain_digest,
@@ -316,6 +322,16 @@ def main() -> int:
             ],
         },
         "components": components,
+        "dependencies": [
+            {
+                "ref": "pkg:github/PastureStack/ecr-credential-sync@3.1.0",
+                "dependsOn": [component["bom-ref"] for component in components],
+            },
+            *[
+                {"ref": component["bom-ref"], "dependsOn": []}
+                for component in components
+            ],
+        ],
     }
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
