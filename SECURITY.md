@@ -38,10 +38,12 @@ the test suite never waits on production delays.
 
 ## Build boundary
 
-- Build and runtime images use the digest-pinned Ubuntu 26.04 base. The build
-  uses Go 1.27.0, Docker CLI 29.7.2, and the checksum-patched Buildx 0.36.1
-  source. Its identity resolver uses `jq` `1.8.1-4ubuntu2`, installed from the
-  same dated Ubuntu snapshot and verified against the direct package lock.
+- The build image uses the digest-pinned Ubuntu 26.04 base. It uses Go 1.27.0,
+  Docker CLI 29.7.2, and the checksum-patched Buildx 0.36.1 source. Its identity
+  resolver uses `jq` `1.8.1-4ubuntu2`, installed from the same dated Ubuntu
+  snapshot and verified against the direct package lock. The Linux runtime is
+  `scratch`: it contains only the static service binary, the pinned CA bundle,
+  legal notices, and an empty non-root home directory.
 - The host Buildx client is `v0.36.1`, built twice by the repository-owned
   `scripts/install-locked-host-buildx` verifier inside an empty, caller-owned
   mode-`0700` run root below `$HOME`. CI copies the byte-identical binary into a

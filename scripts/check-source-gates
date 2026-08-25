@@ -379,26 +379,26 @@ require_marker scripts/test-buildx-buildkit-version 'duplicate.txt' ECR_SYNC_BUI
 require_marker scripts/test-buildx-buildkit-version 'extra-field.txt' ECR_SYNC_BUILDKIT_VERSION_EXTRA_FIELD_REGRESSION_MISSING
 require_marker scripts/test-buildx-buildkit-version 'old-error-format.txt' ECR_SYNC_BUILDKIT_VERSION_OLD_FORMAT_REGRESSION_MISSING
 require_marker scripts/test-buildx-buildkit-version 'empty-value.txt' ECR_SYNC_BUILDKIT_VERSION_EMPTY_REGRESSION_MISSING
+require_marker package/Dockerfile 'FROM scratch' ECR_SYNC_RUNTIME_BASE_NOT_SCRATCH
 require_marker package/Dockerfile 'USER 10001:10001' ECR_SYNC_RUNTIME_NOT_NON_ROOT
-require_marker package/Dockerfile 'COPY --chown=0:0 --chmod=0444 ubuntu-apt.lock /usr/share/pasturestack/manifests/ubuntu-apt.lock' ECR_SYNC_RUNTIME_LOCK_MODE_NOT_EXPLICIT
-require_marker package/Dockerfile 'chmod 0755 /usr/share/pasturestack /usr/share/pasturestack/manifests' ECR_SYNC_RUNTIME_MANIFEST_DIRECTORY_MODE_MISSING
-require_marker package/Dockerfile 'chmod 0444 \' ECR_SYNC_RUNTIME_MANIFEST_FILE_MODE_MISSING
-require_marker .github/workflows/supply-chain.yml 'test "$(id -u):$(id -g)" = "10001:10001"' ECR_SYNC_RUNTIME_MANIFEST_DEFAULT_USER_GATE_MISSING
-require_marker .github/workflows/supply-chain.yml 'for manifest_parent in / /usr /usr/share /usr/share/pasturestack "$manifest_root"' ECR_SYNC_RUNTIME_MANIFEST_PARENT_TRAVERSE_GATE_MISSING
-require_marker .github/workflows/supply-chain.yml 'find /usr/share/pasturestack -type d -perm /022' ECR_SYNC_RUNTIME_MANIFEST_DIRECTORY_WRITE_GATE_MISSING
-require_marker .github/workflows/supply-chain.yml 'find "$manifest_root" -type f -perm /022' ECR_SYNC_RUNTIME_MANIFEST_WRITE_MODE_GATE_MISSING
-require_marker .github/workflows/supply-chain.yml 'find "$manifest_root" -type f ! -perm -0444' ECR_SYNC_RUNTIME_MANIFEST_READ_MODE_GATE_MISSING
-require_marker .github/workflows/supply-chain.yml 'test -f "$required_manifest"' ECR_SYNC_RUNTIME_MANIFEST_COMPLETENESS_GATE_MISSING
-require_marker .github/workflows/supply-chain.yml 'cat "$required_manifest" >/dev/null' ECR_SYNC_RUNTIME_MANIFEST_READ_GATE_MISSING
+require_marker package/Dockerfile 'COPY --from=snapshot-ca-bootstrap --chown=0:0 --chmod=0444 /snapshot-ca-certificates.crt /etc/ssl/certs/ca-certificates.crt' ECR_SYNC_RUNTIME_CA_BUNDLE_MISSING
+require_marker package/Dockerfile 'COPY --chown=10001:10001 --chmod=0555 ecr-credential-sync /usr/local/bin/ecr-credential-sync' ECR_SYNC_RUNTIME_BINARY_MODE_MISSING
+require_marker package/Dockerfile 'SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt' ECR_SYNC_RUNTIME_CA_ENV_MISSING
+require_marker package/Dockerfile 'org.opencontainers.image.base.name="scratch"' ECR_SYNC_RUNTIME_BASE_LABEL_MISSING
+require_marker .github/workflows/supply-chain.yml '{{.Config.User}}' ECR_SYNC_RUNTIME_USER_READBACK_MISSING
+require_marker .github/workflows/supply-chain.yml 'org.opencontainers.image.base.name' ECR_SYNC_RUNTIME_BASE_READBACK_MISSING
+require_marker .github/workflows/supply-chain.yml '{{json .Config.Entrypoint}}' ECR_SYNC_RUNTIME_ENTRYPOINT_READBACK_MISSING
+require_marker .github/workflows/supply-chain.yml 'SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt' ECR_SYNC_RUNTIME_CA_ENV_READBACK_MISSING
 reject_marker package/Dockerfile 'chmod 777' ECR_SYNC_RUNTIME_WORLD_WRITABLE_MODE_PRESENT
 reject_marker package/Dockerfile 'USER root' ECR_SYNC_RUNTIME_ROOT_USER_PRESENT
 reject_marker .github/workflows/supply-chain.yml '--user root' ECR_SYNC_RUNTIME_MANIFEST_ROOT_OVERRIDE_PRESENT
 reject_marker .github/workflows/supply-chain.yml '--user 0' ECR_SYNC_RUNTIME_MANIFEST_UID_ZERO_OVERRIDE_PRESENT
-require_marker package/Dockerfile 'COPY licenses/third-party/ /licenses/third-party/' ECR_SYNC_RUNTIME_LEGAL_FILES_MISSING
+require_marker package/Dockerfile 'COPY --chown=0:0 licenses/third-party/ /licenses/third-party/' ECR_SYNC_RUNTIME_LEGAL_FILES_MISSING
 require_marker package/Dockerfile 'org.opencontainers.image.version="${VERSION}"' ECR_SYNC_OCI_VERSION_MISSING
 require_marker package/Dockerfile 'org.opencontainers.image.revision="${REVISION}"' ECR_SYNC_OCI_REVISION_MISSING
-require_marker package/Dockerfile 'runtime-ubuntu-packages.tsv' ECR_SYNC_RUNTIME_DPKG_MANIFEST_MISSING
-require_marker package/Dockerfile 'ca-certificates="${UBUNTU_APT_CA_CERTIFICATES_VERSION}"' ECR_SYNC_RUNTIME_APT_NOT_PINNED
+reject_marker package/Dockerfile 'runtime-ubuntu-packages.tsv' ECR_SYNC_RUNTIME_DPKG_MANIFEST_PRESENT
+reject_marker package/Dockerfile 'apt-get ' ECR_SYNC_RUNTIME_APT_PRESENT
+reject_marker package/Dockerfile 'dpkg-query ' ECR_SYNC_RUNTIME_DPKG_QUERY_PRESENT
 reject_marker package/Dockerfile 'apt-get -y upgrade' ECR_SYNC_RUNTIME_ROLLING_UPGRADE_PRESENT
 require_marker package/windows/amd64/Dockerfile 'mcr.microsoft.com/windows/nanoserver:ltsc2022@sha256:e4ce8c20390c3785c3cbeef15c579d186b3599d37525c596590cf4508e38d3ff' ECR_SYNC_WINDOWS_BASE_NOT_PINNED
 require_marker scripts/package 'test "$legal_count" -eq 27' ECR_SYNC_LEGAL_COUNT_GATE_MISSING
@@ -823,7 +823,7 @@ fi
 require_marker .github/workflows/supply-chain.yml "stat -c '%u:%g' bin/ecr-credential-sync" ECR_SYNC_OUTPUT_OWNERSHIP_GATE_MISSING
 require_marker .github/workflows/supply-chain.yml "vex_expires='2026-09-15T00:00:00Z'" ECR_SYNC_DAPPER_VEX_EXPIRY_MISSING
 require_marker .github/workflows/supply-chain.yml 'evidence/dapper.openvex.json' ECR_SYNC_DAPPER_VEX_EVIDENCE_MISSING
-require_marker .github/workflows/supply-chain.yml "! grep -Eq \$'^package\\tlinux-libc-dev([:]|\\t)' evidence/runtime-dpkg.tsv" ECR_SYNC_RUNTIME_KERNEL_HEADER_BOUNDARY_MISSING
+require_marker package/Dockerfile 'org.opencontainers.image.base.name="scratch"' ECR_SYNC_RUNTIME_KERNEL_HEADER_BOUNDARY_MISSING
 require_marker scripts/entry 'trap restore_output_ownership EXIT' ECR_SYNC_OUTPUT_OWNERSHIP_TRAP_MISSING
 require_marker scripts/entry 'chown -R "$uid:$gid" "${outputs[@]}"' ECR_SYNC_TARGETED_OUTPUT_CHOWN_MISSING
 reject_marker scripts/entry 'chown -R $DAPPER_UID:$DAPPER_GID .' ECR_SYNC_CHECKOUT_WIDE_CHOWN_PRESENT
@@ -1017,5 +1017,5 @@ if [ "$failure_count" -ne 0 ]; then
   exit 1
 fi
 
-printf 'ECR_SYNC_SOURCE_GATES_OK go=1.27.0 go_telemetry=off-source-date-epoch-utc go_telemetry_readbacks=5 go_telemetry_cleanup_cwd=two-callers-explicit-root-before-delete docker=29.7.2 docker_cli_source_built=go1.27.0 buildx=0.36.1 dapper_buildx_executable_version=v0.36.1 buildx_go_archive=v0.3.0 buildx_x_mod=v0.40.0 buildx_cves_fixed=3 buildx_patch=sha256:a29fdda204d592d0d46ed32b5fdc4336a7b3a7276301836d0a75b9386ca780f7 jq=1.8.1 jq_package=1.8.1-4ubuntu2 host_buildx=0.36.1 host_buildx_binary=sha256:6bd2cb8809abf99fd2a0acaf50a51b85e9a4b254cc9bfede6305e85f42c59eb2 host_buildx_builds=2-offline-reproducible host_buildkit=0.32.2 buildkit_version_readback=exact-single-record dapper_identity=buildx-iid+metadata-config+daemon-config-or-manifest ubuntu=26.04 snapshot=20260808T000000Z non_root=1 legal_files=%s endpoint_override=bounded brand_gate=tracked_source_only runtime_manifest_access=default-user-read-only buildx_legacy_module_removed=1 embedded_patch_whitespace_scope=exact-path-with-inner-validation runtime_mtime_normalization=all_local_copy_inputs dapper_reproducibility=buildkit-rewrite-timestamp runtime_export=docker-archive-explicit-load runtime_builder=exact-run-owned-pinned sbom_trivy_gate=1\n' \
+printf 'ECR_SYNC_SOURCE_GATES_OK go=1.27.0 go_telemetry=off-source-date-epoch-utc go_telemetry_readbacks=5 go_telemetry_cleanup_cwd=two-callers-explicit-root-before-delete docker=29.7.2 docker_cli_source_built=go1.27.0 buildx=0.36.1 dapper_buildx_executable_version=v0.36.1 buildx_go_archive=v0.3.0 buildx_x_mod=v0.40.0 buildx_cves_fixed=3 buildx_patch=sha256:a29fdda204d592d0d46ed32b5fdc4336a7b3a7276301836d0a75b9386ca780f7 jq=1.8.1 jq_package=1.8.1-4ubuntu2 host_buildx=0.36.1 host_buildx_binary=sha256:6bd2cb8809abf99fd2a0acaf50a51b85e9a4b254cc9bfede6305e85f42c59eb2 host_buildx_builds=2-offline-reproducible host_buildkit=0.32.2 buildkit_version_readback=exact-single-record dapper_identity=buildx-iid+metadata-config+daemon-config-or-manifest ubuntu_builder=26.04 snapshot=20260808T000000Z runtime_base=scratch non_root=1 legal_files=%s endpoint_override=bounded brand_gate=tracked_source_only buildx_legacy_module_removed=1 embedded_patch_whitespace_scope=exact-path-with-inner-validation runtime_mtime_normalization=all_local_copy_inputs dapper_reproducibility=buildkit-rewrite-timestamp runtime_export=docker-archive-explicit-load runtime_builder=exact-run-owned-pinned sbom_trivy_gate=1\n' \
   "$legal_count"

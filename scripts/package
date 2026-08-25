@@ -61,8 +61,7 @@ cleanup() {
       "${PACKAGE_DIR}/SECURITY.md" \
       "${PACKAGE_DIR}/ORIGIN.md" \
       "${PACKAGE_DIR}/COMPATIBILITY.md" \
-      "${PACKAGE_DIR}/THIRD_PARTY_NOTICES.md" \
-      "${PACKAGE_DIR}/ubuntu-apt.lock" || cleanup_failed=1
+      "${PACKAGE_DIR}/THIRD_PARTY_NOTICES.md" || cleanup_failed=1
     rm -rf -- "${PACKAGE_DIR}/licenses" || cleanup_failed=1
   fi
 
@@ -75,7 +74,7 @@ trap cleanup EXIT
 
 for staged_path in \
     ecr-credential-sync LICENSE SECURITY.md ORIGIN.md COMPATIBILITY.md \
-    THIRD_PARTY_NOTICES.md ubuntu-apt.lock licenses; do
+    THIRD_PARTY_NOTICES.md licenses; do
   [ ! -e "${PACKAGE_DIR}/${staged_path}" ] && [ ! -L "${PACKAGE_DIR}/${staged_path}" ] || {
     printf 'package staging path already exists: %s\n' "${PACKAGE_DIR}/${staged_path}" >&2
     exit 1
@@ -99,7 +98,6 @@ cp \
   ../ORIGIN.md \
   ../COMPATIBILITY.md \
   ../THIRD_PARTY_NOTICES.md \
-  ../ubuntu-apt.lock \
   .
 
 legal_count=0

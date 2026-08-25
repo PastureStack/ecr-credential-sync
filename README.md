@@ -193,8 +193,10 @@ source vulnerability reported by Trivy fails the supply-chain workflow.
 
 - Go, Docker CLI, Buildx, BuildKit, GitHub Actions, Linux and Windows base
   images, and Trivy must use an exact version, commit, or immutable digest.
-- The Ubuntu snapshot and every direct APT package version are one atomic lock;
-  update them together and verify the resolved `dpkg` manifests.
+- The builder's Ubuntu snapshot and every direct APT package version are one
+  atomic lock; update them together and verify the resolved `dpkg` manifest.
+- The Linux runtime remains `scratch`; add no package manager, shell, or OS
+  package merely for diagnostics.
 - Operational container references remain plain semantic version tags. Do not
   use `latest`, branch tags, digest suffixes in user-facing image fields, or
   product-specific suffixes in version numbers.
