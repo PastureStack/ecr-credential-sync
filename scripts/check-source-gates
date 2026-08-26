@@ -244,7 +244,7 @@ require_marker Dockerfile.dapper 'ARG BUILDX_X_MOD_VERSION=v0.40.0' ECR_SYNC_BUI
 require_marker Dockerfile.dapper '-X github.com/docker/buildx/version.Version=v${BUILDX_VERSION}' ECR_SYNC_BUILDX_EXECUTABLE_VERSION_PRODUCER_MISSING
 reject_marker Dockerfile.dapper '-X github.com/docker/buildx/version.Version=${BUILDX_VERSION}' ECR_SYNC_BUILDX_EXECUTABLE_VERSION_PRODUCER_NONCANONICAL
 require_marker Dockerfile.dapper 'ARG UBUNTU_APT_SNAPSHOT=20260825T000000Z' ECR_SYNC_APT_SNAPSHOT_NOT_PINNED
-require_marker Dockerfile.dapper 'ubuntu:26.04@sha256:678c6550cc43645e08669028bc177f50be4e7c5b8cca677067b1914d4afc7a03' ECR_SYNC_UBUNTU_DIGEST_NOT_CURRENT
+require_marker Dockerfile.dapper 'ubuntu:26.04@sha256:2260313b31c8c011cd2eebe728008efac1b3982be73eb71348ea2648d2c0e09b' ECR_SYNC_UBUNTU_DIGEST_NOT_CURRENT
 require_marker Dockerfile.dapper 'dapper-ubuntu-packages.tsv' ECR_SYNC_DAPPER_DPKG_MANIFEST_MISSING
 require_marker Dockerfile.dapper 'dapper-toolchain.tsv' ECR_SYNC_DAPPER_TOOLCHAIN_MANIFEST_MISSING
 require_marker Dockerfile.dapper 'test "$(jq --version)" = "jq-1.8.1"' ECR_SYNC_DAPPER_JQ_VERSION_READBACK_MISSING
