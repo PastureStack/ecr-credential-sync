@@ -72,9 +72,13 @@ docker run --rm \
 ghcr.io/pasturestack/ecr-credential-sync:v3.1.0
 ```
 
-Windows Server 2022 hosts use the separately versioned
-`v3.1.2-windows-ltsc2022` image. The Catalog selects it only for Windows
-environments; Linux deployments continue to use `v3.1.0`.
+Windows Server 2022 hosts use
+`ghcr.io/pasturestack/ecr-credential-sync-windows:v3.1.2`. The package name
+identifies the platform, while the tag remains pure numeric. This coordinate
+is an exact manifest alias of the already reviewed Windows build
+(`sha256:937b0f642694c6e6638486ec98aa786b82083a12848fd7c0764c1a4ebf718ee5`),
+so the naming correction does not change image bytes. Linux deployments
+continue to use `v3.1.0`.
 
 Do not publish a mutable `latest` tag. Deployment examples and Catalog
 templates use immutable semantic version tags; release digests are retained
