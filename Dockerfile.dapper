@@ -20,7 +20,7 @@ RUN set -eux; \
     case "${SOURCE_DATE_EPOCH}" in ''|*[!0-9]*) exit 64 ;; esac; \
     touch --no-dereference --date="@${SOURCE_DATE_EPOCH}" /snapshot-ca-certificates.crt
 
-FROM ${UBUNTU_IMAGE}
+FROM ${UBUNTU_IMAGE} AS dapper-base
 
 # Modified by PastureStack contributors for independent maintenance and rebranding.
 
@@ -200,6 +200,10 @@ RUN set -eux; \
     rm -rf /tmp/docker-cli-src /tmp/docker-cli.tar.gz /tmp/docker-go-mod /tmp/go-build-cache; \
     bash /usr/local/libexec/pasturestack/check-go-telemetry-state /tmp/go-config/go/telemetry "${SOURCE_DATE_EPOCH}" /usr/local/go/bin/go
 
+# Keep compiler downloads and transient source-tree metadata out of the final
+# Dapper filesystem. Only the normalized, verified Buildx outputs cross stages.
+FROM dapper-base AS buildx-builder
+
 RUN set -eux; \
     buildx_source_uri="https://codeload.github.com/docker/buildx/tar.gz/${BUILDX_GIT_COMMIT}"; \
     curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 --connect-timeout 10 --max-time 300 \
@@ -258,6 +262,15 @@ RUN set -eux; \
     cd /; \
     rm -rf /tmp/buildx-src /tmp/buildx.tar.gz /tmp/buildx-deps.txt /tmp/buildx-patched-go-files.txt /tmp/buildx-go-mod /tmp/go-build-cache; \
     bash /usr/local/libexec/pasturestack/check-go-telemetry-state /tmp/go-config/go/telemetry "${SOURCE_DATE_EPOCH}" /usr/local/go/bin/go
+
+FROM dapper-base AS dapper-final
+
+COPY --from=buildx-builder --chown=0:0 --chmod=0555 \
+    /usr/libexec/docker/cli-plugins/docker-buildx \
+    /usr/libexec/docker/cli-plugins/docker-buildx
+COPY --from=buildx-builder --chown=0:0 --chmod=0444 \
+    /usr/share/pasturestack/manifests/buildx-go-version.txt \
+    /usr/share/pasturestack/manifests/buildx-go-version.txt
 
 RUN set -eux; \
     . /usr/share/pasturestack/manifests/ubuntu-apt.lock; \

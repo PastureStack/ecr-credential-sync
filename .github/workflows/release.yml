@@ -103,7 +103,9 @@ jobs:
           release_root="$release_dir/ecr-credential-sync-${RELEASE_TAG#v}-linux-amd64"
           mkdir -p "$release_root"
           cp bin/ecr-credential-sync LICENSE COMPATIBILITY.md ORIGIN.md SECURITY.md THIRD_PARTY_NOTICES.md "$release_root/"
-          cp -R LICENSES "$release_root/third-party-licenses"
+          if [ -d LICENSES ]; then
+            cp -R LICENSES "$release_root/third-party-licenses"
+          fi
 
           docker pull "$TRIVY_IMAGE"
           cache="$RUNNER_TEMP/ecr-release-trivy-cache"
