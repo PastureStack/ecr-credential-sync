@@ -465,6 +465,8 @@ require_marker .github/workflows/release.yml 'workflow_dispatch:' ECR_SYNC_RELEA
 require_marker .github/workflows/release.yml 'export DOCKER_CONFIG="$docker_config_root"' ECR_SYNC_RELEASE_BUILDER_CONFIG_MISSING
 require_marker .github/workflows/release.yml 'if [ -d LICENSES ]; then' ECR_SYNC_OPTIONAL_LICENSE_DIRECTORY_GATE_MISSING
 require_marker .github/workflows/release.yml '--version "${RELEASE_TAG#v}"' ECR_SYNC_RELEASE_SBOM_VERSION_BINDING_MISSING
+require_marker .github/workflows/release.yml "--format '{{json .Manifest}}' | jq -er '.digest'" ECR_SYNC_RELEASE_REMOTE_DIGEST_GATE_MISSING
+reject_marker .github/workflows/release.yml '{{.Manifest.Digest}}' ECR_SYNC_RELEASE_INVALID_DIGEST_TEMPLATE_PRESENT
 require_marker .github/workflows/supply-chain.yml '--version "${VERSION_OVERRIDE#v}"' ECR_SYNC_REVIEW_SBOM_VERSION_BINDING_MISSING
 require_marker .github/workflows/release.yml '.metadata.component.version == $version' ECR_SYNC_RELEASE_SBOM_VERSION_READBACK_MISSING
 require_marker .github/workflows/supply-chain.yml '.metadata.component.version == $version' ECR_SYNC_REVIEW_SBOM_VERSION_READBACK_MISSING
