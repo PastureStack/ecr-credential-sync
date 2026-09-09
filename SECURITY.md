@@ -60,20 +60,23 @@ the test suite never waits on production delays.
   (`sha256:675c26c449cbb18fc24b74650de1eabbae6e16f64326fd85a283fb3b58280685`),
   applies the repository patch
   (`sha256:a29fdda204d592d0d46ed32b5fdc4336a7b3a7276301836d0a75b9386ca780f7`),
-  and performs two vendor-only, `GOPROXY=off` builds. It requires identical
+  downloads the checksum-verified target modules once, and performs two
+  `GOPROXY=off` source builds from separate module caches. It requires identical
   dependency lists and binaries, verifies result
-  `sha256:6bd2cb8809abf99fd2a0acaf50a51b85e9a4b254cc9bfede6305e85f42c59eb2`,
+  `sha256:05d6007425f3ec0c9bcf10aad49034e4342c34bd63ecd1cb0ac89ddfdf934c79`,
   Buildx `v0.36.1`, commit `1d8dde89b8aba914e05e45366770736fea1fd690`,
-  `github.com/moby/go-archive v0.3.0`, and `golang.org/x/mod v0.40.0`. It writes
+  `github.com/moby/go-archive v0.3.0`, `golang.org/x/mod v0.40.0`, and
+  `google.golang.org/grpc v1.83.2`. It writes
   only below an empty,
   canonical, caller-owned run root whose ancestors are root- or caller-owned;
   any group- or world-writable ancestor must be sticky. Later operations stay
   bound to that validated directory identity. The helper never installs into a
   system directory or global Docker CLI plugin directory. Always-run cleanup
   revalidates the exact two run-root paths, identities, owners, and mode `0700`
-  before deleting only those directories. As of 2026-08-20, the latest signed
+  before deleting only those directories. As of 2026-09-09, the latest signed
   upstream Buildx release remains `v0.36.1`; its official binary contains
-  `go-archive v0.2.1` and `x/mod v0.38.0`, and no signed fixed release exists.
+  `go-archive v0.2.1`, `x/mod v0.38.0`, and `grpc v1.82.1`, and no signed fixed
+  release exists.
   The same locked upgrade is therefore required for both host and Dapper
   binaries; these CVEs must not be suppressed with OpenVEX.
 - Every Dapper export records its manifest digest separately. The Buildx IID

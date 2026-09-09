@@ -33,6 +33,8 @@ HOST_TOOLCHAIN_KEYS = (
     "HOST_BUILDX_GO_SHA256",
     "HOST_BUILDX_GO_ARCHIVE_VERSION",
     "HOST_BUILDX_X_MOD_VERSION",
+    "HOST_BUILDX_UPSTREAM_GRPC_VERSION",
+    "HOST_BUILDX_GRPC_VERSION",
     "HOST_BUILDX_BINARY_SHA256",
     "HOST_BUILDKIT_VERSION",
     "HOST_BUILDKIT_IMAGE",
@@ -295,6 +297,14 @@ def main() -> int:
                 {
                     "name": "pasturestack:host-buildx-x-mod-version",
                     "value": host_toolchain["HOST_BUILDX_X_MOD_VERSION"],
+                },
+                {
+                    "name": "pasturestack:host-buildx-upstream-grpc-version",
+                    "value": host_toolchain["HOST_BUILDX_UPSTREAM_GRPC_VERSION"],
+                },
+                {
+                    "name": "pasturestack:host-buildx-grpc-version",
+                    "value": host_toolchain["HOST_BUILDX_GRPC_VERSION"],
                 },
                 {
                     "name": "pasturestack:host-buildx-binary-sha256",

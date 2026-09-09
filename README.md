@@ -92,8 +92,9 @@ commit-locked official source with Go 1.27.0, and records both the binary hash
 and embedded Go build information. It also locks Buildx 0.36.1 and installs
 `jq` `1.8.1-4ubuntu2` as the fail-closed Dapper identity metadata parser. A
 checksum-locked Buildx patch removes its sole compiled dependency on the legacy
-Docker module and upgrades the compiled `github.com/moby/go-archive` and
-`golang.org/x/mod` modules to `v0.3.0` and `v0.40.0`.
+Docker module and upgrades the compiled `github.com/moby/go-archive`,
+`golang.org/x/mod`, and `google.golang.org/grpc` modules to `v0.3.0`, `v0.40.0`,
+and `v1.83.2`.
 The host build client is built twice as Buildx `v0.36.1` by the repository-owned
 `scripts/install-locked-host-buildx` verifier. GitHub Actions gives the verified
 source builder an empty, caller-owned mode-`0700` run root under `$HOME`, then
@@ -109,12 +110,13 @@ vendor/security patch
 Go 1.27.0 archive
 (`sha256:675c26c449cbb18fc24b74650de1eabbae6e16f64326fd85a283fb3b58280685`),
 and resulting Linux amd64 binary
-(`sha256:6bd2cb8809abf99fd2a0acaf50a51b85e9a4b254cc9bfede6305e85f42c59eb2`).
-As of 2026-08-20, upstream `v0.36.1` remains the latest signed Buildx release,
-but its official binary still records `go-archive v0.2.1` and `x/mod v0.38.0`;
-upstream has no signed release containing both fixed module versions. Both the
-Dapper and host plugins therefore use the same locked vendor upgrade instead
-of an OpenVEX exception. The Ubuntu 26.04 base image is digest-pinned, and
+(`sha256:05d6007425f3ec0c9bcf10aad49034e4342c34bd63ecd1cb0ac89ddfdf934c79`).
+As of 2026-09-09, upstream `v0.36.1` remains the latest signed Buildx release,
+but its official binary still records `go-archive v0.2.1`, `x/mod v0.38.0`, and
+`grpc v1.82.1`; upstream has no signed release containing all fixed module
+versions. Both the Dapper and host plugins therefore use the same locked
+source-build upgrades instead of an OpenVEX exception. The Ubuntu 26.04 base
+image is digest-pinned, and
 all direct APT packages are locked to the official `20260909T000000Z` Ubuntu
 snapshot. Each image records its resolved `dpkg` inventory, and the build image
 records the installed GCC, Go, Docker, Buildx, and `jq` binaries. The source

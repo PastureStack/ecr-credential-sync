@@ -1,9 +1,10 @@
 # Host-side Dapper build toolchain verified from official sources and the
-# Docker registry on 2026-08-20. Buildx v0.36.1 is the latest signed release,
+# Docker registry on 2026-09-09. Buildx v0.36.1 is the latest signed release,
 # but its official binary embeds vulnerable dependency versions. The host
 # plugin is therefore rebuilt twice from the exact release source with the
-# repository-locked offline vendor patch. Keep these values synchronized with
-# CI, source SBOM metadata, README.md, SECURITY.md, and the source gate.
+# repository-locked checksum-verified source build. Keep these values
+# synchronized with CI, source SBOM metadata, README.md, SECURITY.md, and the
+# source gate.
 HOST_BUILDX_VERSION=v0.36.1
 HOST_BUILDX_COMMIT=1d8dde89b8aba914e05e45366770736fea1fd690
 HOST_BUILDX_SOURCE_DATE_EPOCH=1785856317
@@ -19,9 +20,11 @@ HOST_BUILDX_GO_URL=https://go.dev/dl/go1.27.0.linux-amd64.tar.gz
 HOST_BUILDX_GO_SHA256=675c26c449cbb18fc24b74650de1eabbae6e16f64326fd85a283fb3b58280685
 HOST_BUILDX_GO_ARCHIVE_VERSION=v0.3.0
 HOST_BUILDX_X_MOD_VERSION=v0.40.0
-HOST_BUILDX_BINARY_SHA256=6bd2cb8809abf99fd2a0acaf50a51b85e9a4b254cc9bfede6305e85f42c59eb2
+HOST_BUILDX_UPSTREAM_GRPC_VERSION=v1.82.1
+HOST_BUILDX_GRPC_VERSION=v1.83.2
+HOST_BUILDX_BINARY_SHA256=05d6007425f3ec0c9bcf10aad49034e4342c34bd63ecd1cb0ac89ddfdf934c79
 HOST_BUILDKIT_VERSION=v0.32.2
 HOST_BUILDKIT_IMAGE=moby/buildkit:v0.32.2@sha256:28a898719c18a33f4e8000685287fa36fd0dd9560c6440227d3a732d79bb41d8
-HOST_BUILDX_INSTALL_METHOD=repository-locked-offline-source-builder
+HOST_BUILDX_INSTALL_METHOD=repository-locked-source-builder
 HOST_BUILDX_INSTALLER_PATH=scripts/install-locked-host-buildx
 HOST_BUILDX_PLUGIN_RELATIVE_PATH=cli-plugins/docker-buildx

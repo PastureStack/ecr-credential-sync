@@ -179,7 +179,7 @@ go_telemetry_dockerfile_contract() {
   go_telemetry_cleanup_contract \
     "$dockerfile" \
     /tmp/buildx-src \
-    'rm -rf /tmp/buildx-src /tmp/buildx.tar.gz /tmp/buildx-deps.txt /tmp/buildx-patched-go-files.txt /tmp/go-build-cache' \
+    'rm -rf /tmp/buildx-src /tmp/buildx.tar.gz /tmp/buildx-deps.txt /tmp/buildx-patched-go-files.txt /tmp/buildx-go-mod /tmp/go-build-cache' \
     '    bash /usr/local/libexec/pasturestack/check-go-telemetry-state /tmp/go-config/go/telemetry "${SOURCE_DATE_EPOCH}" /usr/local/go/bin/go' || return 1
 }
 
@@ -244,6 +244,9 @@ require_marker Dockerfile.dapper 'ARG BUILDX_SOURCE_SHA256=fb28b5c2a198d05482f06
 require_marker Dockerfile.dapper 'ARG BUILDX_SECURITY_PATCH_SHA256=a29fdda204d592d0d46ed32b5fdc4336a7b3a7276301836d0a75b9386ca780f7' ECR_SYNC_BUILDX_PATCH_SHA_MISSING
 require_marker Dockerfile.dapper 'ARG BUILDX_GO_ARCHIVE_VERSION=v0.3.0' ECR_SYNC_BUILDX_GO_ARCHIVE_VERSION_MISSING
 require_marker Dockerfile.dapper 'ARG BUILDX_X_MOD_VERSION=v0.40.0' ECR_SYNC_BUILDX_X_MOD_VERSION_MISSING
+require_marker Dockerfile.dapper 'ARG BUILDX_UPSTREAM_GRPC_VERSION=v1.82.1' ECR_SYNC_BUILDX_UPSTREAM_GRPC_VERSION_MISSING
+require_marker Dockerfile.dapper 'ARG BUILDX_GRPC_VERSION=v1.83.2' ECR_SYNC_BUILDX_GRPC_VERSION_NOT_PATCHED
+require_marker Dockerfile.dapper 'go get "google.golang.org/grpc@${BUILDX_GRPC_VERSION}"' ECR_SYNC_BUILDX_GRPC_PATCH_STEP_MISSING
 require_marker Dockerfile.dapper '-X github.com/docker/buildx/version.Version=v${BUILDX_VERSION}' ECR_SYNC_BUILDX_EXECUTABLE_VERSION_PRODUCER_MISSING
 reject_marker Dockerfile.dapper '-X github.com/docker/buildx/version.Version=${BUILDX_VERSION}' ECR_SYNC_BUILDX_EXECUTABLE_VERSION_PRODUCER_NONCANONICAL
 require_marker Dockerfile.dapper 'ARG UBUNTU_APT_SNAPSHOT=20260909T000000Z' ECR_SYNC_APT_SNAPSHOT_NOT_PINNED
@@ -340,7 +343,7 @@ require_marker scripts/install-locked-host-buildx 'security-patch-sha256-mismatc
 require_marker scripts/install-locked-host-buildx 'git apply --reverse --check "$patch_copy"' ECR_SYNC_LOCKED_BUILDX_PATCH_REVERSE_CHECK_MISSING
 require_marker scripts/install-locked-host-buildx 'git apply --numstat "$patch_copy"' ECR_SYNC_LOCKED_BUILDX_PATCH_FILE_AUDIT_MISSING
 require_marker scripts/install-locked-host-buildx '"$gofmt_bin" -d -- "$patched_go_path"' ECR_SYNC_LOCKED_BUILDX_PATCH_GO_FORMAT_GATE_MISSING
-require_marker scripts/install-locked-host-buildx 'export GOPROXY=off' ECR_SYNC_LOCKED_BUILDX_OFFLINE_BUILD_GATE_MISSING
+require_marker scripts/install-locked-host-buildx 'GOMODCACHE="$module_cache_root" GOPROXY=off' ECR_SYNC_LOCKED_BUILDX_OFFLINE_BUILD_GATE_MISSING
 require_marker scripts/install-locked-host-buildx 'binaries-not-reproducible' ECR_SYNC_LOCKED_BUILDX_BINARY_REPRODUCIBILITY_GATE_MISSING
 require_marker scripts/install-locked-host-buildx 'dependency-lists-not-reproducible' ECR_SYNC_LOCKED_BUILDX_DEPENDENCY_REPRODUCIBILITY_GATE_MISSING
 require_marker scripts/install-locked-host-buildx 'bash "$module_checker" "$module_manifest"' ECR_SYNC_LOCKED_BUILDX_MODULE_READBACK_GATE_MISSING
@@ -365,6 +368,8 @@ require_marker scripts/test-install-locked-host-buildx 'patch-apply-failure' ECR
 require_marker scripts/test-install-locked-host-buildx 'cve-2026-17106' ECR_SYNC_LOCKED_BUILDX_GO_ARCHIVE_CVE_REGRESSION_MISSING
 require_marker scripts/test-install-locked-host-buildx 'cve-2026-56864' ECR_SYNC_LOCKED_BUILDX_X_MOD_FIRST_CVE_REGRESSION_MISSING
 require_marker scripts/test-install-locked-host-buildx 'cve-2026-56865' ECR_SYNC_LOCKED_BUILDX_X_MOD_SECOND_CVE_REGRESSION_MISSING
+require_marker scripts/test-install-locked-host-buildx 'cve-2026-84304' ECR_SYNC_LOCKED_BUILDX_GRPC_FIRST_CVE_REGRESSION_MISSING
+require_marker scripts/test-install-locked-host-buildx 'cve-2026-84445' ECR_SYNC_LOCKED_BUILDX_GRPC_SECOND_CVE_REGRESSION_MISSING
 require_marker scripts/test-install-locked-host-buildx 'existing-destination' ECR_SYNC_LOCKED_BUILDX_EXISTING_REGRESSION_MISSING
 require_marker scripts/test-install-locked-host-buildx 'symlink-destination' ECR_SYNC_LOCKED_BUILDX_SYMLINK_REGRESSION_MISSING
 require_marker scripts/test-install-locked-host-buildx 'writable-destination' ECR_SYNC_LOCKED_BUILDX_WRITABLE_ROOT_REGRESSION_MISSING
@@ -377,6 +382,8 @@ require_marker scripts/check-buildx-module-versions 'dependency-records-not-exac
 require_marker scripts/test-buildx-module-versions 'cve-2026-17106' ECR_SYNC_BUILDX_MODULE_GO_ARCHIVE_CVE_FIXTURE_MISSING
 require_marker scripts/test-buildx-module-versions 'cve-2026-56864' ECR_SYNC_BUILDX_MODULE_X_MOD_FIRST_CVE_FIXTURE_MISSING
 require_marker scripts/test-buildx-module-versions 'cve-2026-56865' ECR_SYNC_BUILDX_MODULE_X_MOD_SECOND_CVE_FIXTURE_MISSING
+require_marker scripts/test-buildx-module-versions 'cve-2026-84304' ECR_SYNC_BUILDX_MODULE_GRPC_FIRST_CVE_FIXTURE_MISSING
+require_marker scripts/test-buildx-module-versions 'cve-2026-84445' ECR_SYNC_BUILDX_MODULE_GRPC_SECOND_CVE_FIXTURE_MISSING
 require_marker scripts/test-buildx-buildkit-version 'missing.txt' ECR_SYNC_BUILDKIT_VERSION_MISSING_REGRESSION_MISSING
 require_marker scripts/test-buildx-buildkit-version 'duplicate.txt' ECR_SYNC_BUILDKIT_VERSION_DUPLICATE_REGRESSION_MISSING
 require_marker scripts/test-buildx-buildkit-version 'extra-field.txt' ECR_SYNC_BUILDKIT_VERSION_EXTRA_FIELD_REGRESSION_MISSING
@@ -663,10 +670,12 @@ if ! (
     test "${HOST_BUILDX_GO_SHA256-}" = '675c26c449cbb18fc24b74650de1eabbae6e16f64326fd85a283fb3b58280685' &&
     test "${HOST_BUILDX_GO_ARCHIVE_VERSION-}" = 'v0.3.0' &&
     test "${HOST_BUILDX_X_MOD_VERSION-}" = 'v0.40.0' &&
-    test "${HOST_BUILDX_BINARY_SHA256-}" = '6bd2cb8809abf99fd2a0acaf50a51b85e9a4b254cc9bfede6305e85f42c59eb2' &&
+    test "${HOST_BUILDX_UPSTREAM_GRPC_VERSION-}" = 'v1.82.1' &&
+    test "${HOST_BUILDX_GRPC_VERSION-}" = 'v1.83.2' &&
+    test "${HOST_BUILDX_BINARY_SHA256-}" = '05d6007425f3ec0c9bcf10aad49034e4342c34bd63ecd1cb0ac89ddfdf934c79' &&
     test "${HOST_BUILDKIT_VERSION-}" = 'v0.32.2' &&
     test "${HOST_BUILDKIT_IMAGE-}" = 'moby/buildkit:v0.32.2@sha256:28a898719c18a33f4e8000685287fa36fd0dd9560c6440227d3a732d79bb41d8' &&
-    test "${HOST_BUILDX_INSTALL_METHOD-}" = 'repository-locked-offline-source-builder' &&
+    test "${HOST_BUILDX_INSTALL_METHOD-}" = 'repository-locked-source-builder' &&
     test "${HOST_BUILDX_INSTALLER_PATH-}" = 'scripts/install-locked-host-buildx' &&
     test "${HOST_BUILDX_PLUGIN_RELATIVE_PATH-}" = 'cli-plugins/docker-buildx'
 ); then
@@ -689,7 +698,7 @@ require_marker .github/workflows/supply-chain.yml \
   'aquasec/trivy:0.74.0@sha256:62b1e65e8869bc4b4c6aa4fa2b21595256c7c2f6018a9d9ad61caf87187c1969' \
   ECR_SYNC_TRIVY_NOT_PINNED
 require_marker .github/workflows/supply-chain.yml \
-  'test "$HOST_BUILDX_INSTALL_METHOD" = repository-locked-offline-source-builder' \
+  'test "$HOST_BUILDX_INSTALL_METHOD" = repository-locked-source-builder' \
   ECR_SYNC_HOST_BUILDX_INSTALL_METHOD_GATE_MISSING
 require_marker .github/workflows/supply-chain.yml \
   'locked_buildx="$(bash "$HOST_BUILDX_INSTALLER_PATH" "$install_root")"' \
@@ -747,11 +756,15 @@ require_marker .github/workflows/supply-chain.yml 'diff -u toolchain/buildx-secu
 require_marker .github/workflows/supply-chain.yml 'a29fdda204d592d0d46ed32b5fdc4336a7b3a7276301836d0a75b9386ca780f7  evidence/buildx-security.patch' ECR_SYNC_BUILDX_EVIDENCE_SHA_MISSING
 require_marker .github/workflows/supply-chain.yml 'pkg:golang/github.com/moby/go-archive@v0.3.0' ECR_SYNC_BUILDX_GO_ARCHIVE_SBOM_GATE_MISSING
 require_marker .github/workflows/supply-chain.yml 'pkg:golang/golang.org/x/mod@v0.40.0' ECR_SYNC_BUILDX_X_MOD_SBOM_GATE_MISSING
+require_marker .github/workflows/supply-chain.yml 'pkg:golang/google.golang.org/grpc@v1.83.2' ECR_SYNC_BUILDX_GRPC_SBOM_GATE_MISSING
 require_marker .github/workflows/supply-chain.yml 'pkg:golang/github.com/moby/go-archive@v0.2.1' ECR_SYNC_BUILDX_GO_ARCHIVE_SBOM_REGRESSION_GATE_MISSING
 require_marker .github/workflows/supply-chain.yml 'pkg:golang/golang.org/x/mod@v0.38.0' ECR_SYNC_BUILDX_X_MOD_SBOM_REGRESSION_GATE_MISSING
+require_marker .github/workflows/supply-chain.yml 'pkg:golang/google.golang.org/grpc@v1.82.1' ECR_SYNC_BUILDX_GRPC_SBOM_REGRESSION_GATE_MISSING
 require_marker .github/workflows/supply-chain.yml 'CVE-2026-17106' ECR_SYNC_BUILDX_GO_ARCHIVE_TRIVY_REGRESSION_GATE_MISSING
 require_marker .github/workflows/supply-chain.yml 'CVE-2026-56864' ECR_SYNC_BUILDX_X_MOD_FIRST_TRIVY_REGRESSION_GATE_MISSING
 require_marker .github/workflows/supply-chain.yml 'CVE-2026-56865' ECR_SYNC_BUILDX_X_MOD_SECOND_TRIVY_REGRESSION_GATE_MISSING
+require_marker .github/workflows/supply-chain.yml 'CVE-2026-84304' ECR_SYNC_BUILDX_GRPC_FIRST_TRIVY_REGRESSION_GATE_MISSING
+require_marker .github/workflows/supply-chain.yml 'CVE-2026-84445' ECR_SYNC_BUILDX_GRPC_SECOND_TRIVY_REGRESSION_GATE_MISSING
 require_marker .github/workflows/supply-chain.yml 'trivy-database-files.tsv' ECR_SYNC_TRIVY_DB_BYTES_IDENTITY_MISSING
 require_marker .github/workflows/supply-chain.yml 'trivy-database-updated-at.txt' ECR_SYNC_TRIVY_DB_UPDATED_AT_MISSING
 require_marker .github/workflows/supply-chain.yml 'trivy-database-metadata.json' ECR_SYNC_TRIVY_DB_METADATA_EVIDENCE_MISSING
@@ -845,6 +858,8 @@ require_marker scripts/generate-source-sbom.py 'pasturestack:host-buildx-securit
 require_marker scripts/generate-source-sbom.py 'pasturestack:host-buildx-go-sha256' ECR_SYNC_SOURCE_SBOM_HOST_BUILDX_GO_SHA_MISSING
 require_marker scripts/generate-source-sbom.py 'pasturestack:host-buildx-go-archive-version' ECR_SYNC_SOURCE_SBOM_HOST_BUILDX_GO_ARCHIVE_VERSION_MISSING
 require_marker scripts/generate-source-sbom.py 'pasturestack:host-buildx-x-mod-version' ECR_SYNC_SOURCE_SBOM_HOST_BUILDX_X_MOD_VERSION_MISSING
+require_marker scripts/generate-source-sbom.py 'pasturestack:host-buildx-upstream-grpc-version' ECR_SYNC_SOURCE_SBOM_HOST_BUILDX_UPSTREAM_GRPC_VERSION_MISSING
+require_marker scripts/generate-source-sbom.py 'pasturestack:host-buildx-grpc-version' ECR_SYNC_SOURCE_SBOM_HOST_BUILDX_GRPC_VERSION_MISSING
 require_marker scripts/generate-source-sbom.py 'pasturestack:host-buildx-binary-sha256' ECR_SYNC_SOURCE_SBOM_HOST_BUILDX_BINARY_SHA_MISSING
 require_marker scripts/generate-source-sbom.py 'pasturestack:host-buildkit-image' ECR_SYNC_SOURCE_SBOM_HOST_BUILDKIT_MISSING
 require_marker scripts/generate-source-sbom.py 'pasturestack:host-buildx-install-method' ECR_SYNC_SOURCE_SBOM_BUILDX_INSTALL_METHOD_MISSING
