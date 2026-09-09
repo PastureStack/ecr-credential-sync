@@ -463,10 +463,13 @@ require_marker README.md 'ghcr.io/pasturestack/ecr-credential-sync:v3.1.5' ECR_S
 require_marker .github/workflows/release.yml '[[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]' ECR_SYNC_NUMERIC_RELEASE_GATE_MISSING
 require_marker .github/workflows/release.yml 'workflow_dispatch:' ECR_SYNC_RELEASE_RECOVERY_ENTRY_MISSING
 require_marker .github/workflows/release.yml 'export DOCKER_CONFIG="$docker_config_root"' ECR_SYNC_RELEASE_BUILDER_CONFIG_MISSING
+require_marker .github/workflows/release.yml 'printf '\''BUILDER_DOCKER_CONFIG=%s\n'\''' ECR_SYNC_RELEASE_BUILDER_CONFIG_HANDOFF_MISSING
 require_marker .github/workflows/release.yml 'if [ -d LICENSES ]; then' ECR_SYNC_OPTIONAL_LICENSE_DIRECTORY_GATE_MISSING
 require_marker .github/workflows/release.yml '--version "${RELEASE_TAG#v}"' ECR_SYNC_RELEASE_SBOM_VERSION_BINDING_MISSING
-require_marker .github/workflows/release.yml "--format '{{json .Manifest}}' | jq -er '.digest'" ECR_SYNC_RELEASE_REMOTE_DIGEST_GATE_MISSING
-reject_marker .github/workflows/release.yml '{{.Manifest.Digest}}' ECR_SYNC_RELEASE_INVALID_DIGEST_TEMPLATE_PRESENT
+require_marker .github/workflows/release.yml "docker image inspect --format '{{index .RepoDigests 0}}'" ECR_SYNC_RELEASE_REMOTE_DIGEST_GATE_MISSING
+require_marker .github/workflows/release.yml 'attest_home="$RUNNER_TEMP/ecr-release-attest-home"' ECR_SYNC_RELEASE_ATTEST_HOME_MISSING
+require_marker .github/workflows/release.yml 'printf '\''HOME=%s\n'\'' "$attest_home"' ECR_SYNC_RELEASE_ATTEST_HOME_HANDOFF_MISSING
+reject_marker .github/workflows/release.yml 'ATTEST_DOCKER_CONFIG_FILE' ECR_SYNC_RELEASE_LEGACY_ATTEST_CONFIG_PRESENT
 require_marker .github/workflows/supply-chain.yml '--version "${VERSION_OVERRIDE#v}"' ECR_SYNC_REVIEW_SBOM_VERSION_BINDING_MISSING
 require_marker .github/workflows/release.yml '.metadata.component.version == $version' ECR_SYNC_RELEASE_SBOM_VERSION_READBACK_MISSING
 require_marker .github/workflows/supply-chain.yml '.metadata.component.version == $version' ECR_SYNC_REVIEW_SBOM_VERSION_READBACK_MISSING

@@ -61,6 +61,7 @@ jobs:
           docker_config_root="$RUNNER_TEMP/ecr-release-docker-config"
           mkdir -m 0700 "$install_root" "$docker_config_root"
           export DOCKER_CONFIG="$docker_config_root"
+          printf 'BUILDER_DOCKER_CONFIG=%s\n' "$docker_config_root" >> "$GITHUB_ENV"
           locked_buildx="$(bash "$HOST_BUILDX_INSTALLER_PATH" "$install_root")"
           test "$locked_buildx" = "$install_root/bin/docker-buildx"
           test "$(sha256sum "$locked_buildx" | awk '{print $1}')" = "$HOST_BUILDX_BINARY_SHA256"
@@ -166,22 +167,31 @@ jobs:
           set -euo pipefail
           printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
           docker push "$RUNTIME_IMAGE"
-          digest="$("$LOCKED_BUILDX" imagetools inspect "$RUNTIME_IMAGE" \
-            --format '{{json .Manifest}}' | jq -er '.digest')"
-          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          reference="$(docker image inspect --format '{{index .RepoDigests 0}}' "$RUNTIME_IMAGE")"
+          digest="${reference#*@}"
+          if [[ ! "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            printf 'ECR_SYNC_RELEASE_DIGEST_INVALID reference=%s\n' "$reference" >&2
+            exit 1
+          fi
           printf 'digest=%s\n' "$digest" >> "$GITHUB_OUTPUT"
 
-          # actions/attest reads the canonical Docker credential path rather
-          # than DOCKER_CONFIG. Populate that exact path without replacing an
-          # existing runner credential file, then remove it during cleanup.
-          attest_config_root="$HOME/.docker"
+          # Give actions/attest a run-owned canonical HOME and Docker config.
+          # This preserves both the runner's existing HOME and the isolated
+          # Buildx builder configuration used above.
+          attest_home="$RUNNER_TEMP/ecr-release-attest-home"
+          test ! -e "$attest_home"
+          mkdir -m 0700 "$attest_home"
+          attest_config_root="$attest_home/.docker"
           attest_config_file="$attest_config_root/config.json"
-          test ! -e "$attest_config_file"
-          mkdir -p "$attest_config_root"
-          printf '%s' "$GHCR_TOKEN" | env DOCKER_CONFIG="$attest_config_root" \
+          mkdir -m 0700 "$attest_config_root"
+          printf '%s' "$GHCR_TOKEN" | env HOME="$attest_home" DOCKER_CONFIG="$attest_config_root" \
             docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
           test -f "$attest_config_file"
-          printf 'ATTEST_DOCKER_CONFIG_FILE=%s\n' "$attest_config_file" >> "$GITHUB_ENV"
+          {
+            printf 'HOME=%s\n' "$attest_home"
+            printf 'DOCKER_CONFIG=%s\n' "$attest_config_root"
+            printf 'ATTEST_HOME=%s\n' "$attest_home"
+          } >> "$GITHUB_ENV"
 
       - name: Attest release evidence
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
@@ -216,14 +226,18 @@ jobs:
         run: |
           set +e
           cleanup_status=0
-          docker logout ghcr.io >/dev/null 2>&1
-          if [ "${ATTEST_DOCKER_CONFIG_FILE:-}" = "$HOME/.docker/config.json" ]; then
-            env DOCKER_CONFIG="$HOME/.docker" docker logout ghcr.io >/dev/null 2>&1
-            rm -f -- "$ATTEST_DOCKER_CONFIG_FILE" || cleanup_status=$?
-            rmdir -- "$HOME/.docker" >/dev/null 2>&1 || :
+          if [ -n "${ATTEST_HOME:-}" ]; then
+            env HOME="$ATTEST_HOME" DOCKER_CONFIG="$ATTEST_HOME/.docker" \
+              docker logout ghcr.io >/dev/null 2>&1
+            rm -rf -- "$ATTEST_HOME" || cleanup_status=$?
+          fi
+          if [ -n "${BUILDER_DOCKER_CONFIG:-}" ]; then
+            env DOCKER_CONFIG="$BUILDER_DOCKER_CONFIG" \
+              docker logout ghcr.io >/dev/null 2>&1
           fi
           if [ -n "${RELEASE_BUILDER:-}" ]; then
-            "$LOCKED_BUILDX" rm "$RELEASE_BUILDER" >/dev/null 2>&1
+            env DOCKER_CONFIG="$BUILDER_DOCKER_CONFIG" \
+              "$LOCKED_BUILDX" rm "$RELEASE_BUILDER" >/dev/null 2>&1
           fi
           for image in "${RUNTIME_IMAGE:-}" "$DAPPER_IMAGE" "$TRIVY_IMAGE"; do
             if [ -n "$image" ] && docker image inspect "$image" >/dev/null 2>&1; then
