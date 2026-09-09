@@ -7,7 +7,6 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
-import re
 import uuid
 
 
@@ -142,7 +141,11 @@ def main() -> int:
     parser.add_argument("--version", required=True)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
-    if re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", args.version) is None:
+    version_parts = args.version.split(".")
+    if len(version_parts) != 3 or any(
+        not part or not part.isascii() or not part.isdecimal()
+        for part in version_parts
+    ):
         parser.error("--version must be a pure numeric semantic version")
 
     component_purl = (
