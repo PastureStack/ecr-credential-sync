@@ -187,11 +187,11 @@ def main() -> int:
         "metadata": {
             "component": {
                 "type": "application",
-                "bom-ref": "pkg:github/PastureStack/ecr-credential-sync@3.1.0",
+                "bom-ref": "pkg:github/PastureStack/ecr-credential-sync@3.1.3",
                 "group": "PastureStack",
                 "name": "ecr-credential-sync",
-                "version": "3.1.0",
-                "purl": "pkg:github/PastureStack/ecr-credential-sync@3.1.0",
+                "version": "3.1.3",
+                "purl": "pkg:github/PastureStack/ecr-credential-sync@3.1.3",
             },
             "properties": [
                 {
@@ -335,7 +335,7 @@ def main() -> int:
         "components": components,
         "dependencies": [
             {
-                "ref": "pkg:github/PastureStack/ecr-credential-sync@3.1.0",
+                "ref": "pkg:github/PastureStack/ecr-credential-sync@3.1.3",
                 "dependsOn": [component["bom-ref"] for component in components],
             },
             *[

@@ -1,0 +1,196 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write
+  packages: write
+  id-token: write
+  attestations: write
+
+concurrency:
+  group: ecr-credential-sync-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    env:
+      DAPPER_IMAGE: local/ecr-credential-sync-release-dapper:${{ github.sha }}
+      DAPPER_BUILDKIT_IMAGE: moby/buildkit:v0.32.2@sha256:28a898719c18a33f4e8000685287fa36fd0dd9560c6440227d3a732d79bb41d8
+      TARGET_REPOSITORY: ghcr.io/pasturestack/ecr-credential-sync
+      TRIVY_IMAGE: ghcr.io/aquasecurity/trivy:0.74.0@sha256:62b1e65e8869bc4b4c6aa4fa2b21595256c7c2f6018a9d9ad61caf87187c1969
+
+    steps:
+      - name: Check out immutable tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Validate pure numeric release identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF_TYPE" = tag
+          [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          test "$(git cat-file -t "refs/tags/$GITHUB_REF_NAME")" = tag
+          test "$(git rev-list -n 1 "$GITHUB_REF_NAME")" = "$GITHUB_SHA"
+          test -z "$(git status --porcelain)"
+
+      - name: Install repository-locked host Buildx
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          source toolchain/host-build-toolchain.lock
+          install_root="$RUNNER_TEMP/ecr-release-buildx"
+          docker_config_root="$RUNNER_TEMP/ecr-release-docker-config"
+          mkdir -m 0700 "$install_root" "$docker_config_root"
+          locked_buildx="$(bash "$HOST_BUILDX_INSTALLER_PATH" "$install_root")"
+          test "$locked_buildx" = "$install_root/bin/docker-buildx"
+          test "$(sha256sum "$locked_buildx" | awk '{print $1}')" = "$HOST_BUILDX_BINARY_SHA256"
+          mkdir -m 0700 "$docker_config_root/cli-plugins"
+          install -m 0555 "$locked_buildx" "$docker_config_root/cli-plugins/docker-buildx"
+          printf 'DOCKER_CONFIG=%s\n' "$docker_config_root" >> "$GITHUB_ENV"
+          printf 'LOCKED_BUILDX=%s\n' "$locked_buildx" >> "$GITHUB_ENV"
+
+          builder="ecr-release-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          "$locked_buildx" create --name "$builder" --driver docker-container \
+            --driver-opt "image=$DAPPER_BUILDKIT_IMAGE" --use
+          "$locked_buildx" inspect --builder "$builder" --bootstrap
+          printf 'RELEASE_BUILDER=%s\n' "$builder" >> "$GITHUB_ENV"
+
+      - name: Build, test, and package exact tag
+        shell: bash
+        env:
+          ARCH: amd64
+          VERSION_OVERRIDE: ${{ github.ref_name }}
+          TAG: ${{ github.ref_name }}
+          REPO: ghcr.io/pasturestack
+          RUNTIME_IMAGE_BUILD_TOKEN: release-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          make ci \
+            DAPPER_IMAGE="$DAPPER_IMAGE" \
+            DAPPER_BUILDX_COMMAND="$LOCKED_BUILDX" \
+            DAPPER_BUILDER="$RELEASE_BUILDER"
+          runtime_image="$(head -n 1 dist/images)"
+          test "$runtime_image" = "$TARGET_REPOSITORY:$GITHUB_REF_NAME"
+          test "$(docker image inspect --format '{{index .Config.Labels \"org.opencontainers.image.version\"}}' "$runtime_image")" = "$GITHUB_REF_NAME"
+          test "$(docker image inspect --format '{{index .Config.Labels \"org.opencontainers.image.revision\"}}' "$runtime_image")" = "$GITHUB_SHA"
+          printf 'RUNTIME_IMAGE=%s\n' "$runtime_image" >> "$GITHUB_ENV"
+
+      - name: Scan release image and create evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          release_dir=dist/release
+          release_root="$release_dir/ecr-credential-sync-${GITHUB_REF_NAME#v}-linux-amd64"
+          mkdir -p "$release_root"
+          cp bin/ecr-credential-sync LICENSE COMPATIBILITY.md ORIGIN.md SECURITY.md THIRD_PARTY_NOTICES.md "$release_root/"
+          cp -R LICENSES "$release_root/third-party-licenses"
+
+          docker pull "$TRIVY_IMAGE"
+          cache="$RUNNER_TEMP/ecr-release-trivy-cache"
+          mkdir -p "$cache"
+          docker run --rm -v "$cache:/root/.cache/trivy" "$TRIVY_IMAGE" image --download-db-only
+          docker run --rm --network none \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "$PWD/$release_dir:/release" \
+            -v "$cache:/root/.cache/trivy" \
+            "$TRIVY_IMAGE" image --skip-db-update --offline-scan \
+            --scanners vuln,secret --severity UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL \
+            --exit-code 1 "$RUNTIME_IMAGE"
+          docker run --rm --network none \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "$PWD/$release_dir:/release" \
+            -v "$cache:/root/.cache/trivy" \
+            "$TRIVY_IMAGE" image --skip-db-update --offline-scan --format cyclonedx \
+            --output "/release/ecr-credential-sync-${GITHUB_REF_NAME#v}-image.cdx.json" "$RUNTIME_IMAGE"
+          python3 scripts/generate-source-sbom.py \
+            --output "$release_dir/ecr-credential-sync-${GITHUB_REF_NAME#v}-source.cdx.json"
+          cp dist/runtime-image-build.json \
+            "$release_dir/ecr-credential-sync-${GITHUB_REF_NAME#v}-runtime-build.json"
+          for sbom in "$release_dir"/*.cdx.json; do
+            jq -e '.bomFormat == "CycloneDX" and (.serialNumber | length > 0) and ([.components[]?] | length > 0)' "$sbom" >/dev/null
+          done
+
+          source_epoch="$(git show -s --format=%ct HEAD)"
+          find "$release_root" -exec touch -h -d "@${source_epoch}" {} +
+          tar --sort=name --mtime="@${source_epoch}" --owner=0 --group=0 --numeric-owner \
+            -C "$release_dir" -cJf "$release_dir/ecr-credential-sync-${GITHUB_REF_NAME#v}-linux-amd64.tar.xz" \
+            "ecr-credential-sync-${GITHUB_REF_NAME#v}-linux-amd64"
+          (
+            cd "$release_dir"
+            sha256sum \
+              "ecr-credential-sync-${GITHUB_REF_NAME#v}-linux-amd64.tar.xz" \
+              "ecr-credential-sync-${GITHUB_REF_NAME#v}-image.cdx.json" \
+              "ecr-credential-sync-${GITHUB_REF_NAME#v}-source.cdx.json" \
+              "ecr-credential-sync-${GITHUB_REF_NAME#v}-runtime-build.json" \
+              > SHA256SUMS
+          )
+
+      - name: Publish immutable runtime image
+        id: publish
+        shell: bash
+        env:
+          GHCR_TOKEN: ${{ secrets.GHCR_PUBLISH_TOKEN || github.token }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          docker push "$RUNTIME_IMAGE"
+          reference="$(docker image inspect --format '{{index .RepoDigests 0}}' "$RUNTIME_IMAGE")"
+          digest="${reference#*@}"
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          printf 'digest=%s\n' "$digest" >> "$GITHUB_OUTPUT"
+
+      - name: Attest release evidence
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-checksums: dist/release/SHA256SUMS
+
+      - name: Attest runtime image
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ env.TARGET_REPOSITORY }}
+          subject-digest: ${{ steps.publish.outputs.digest }}
+          push-to-registry: true
+
+      - name: Publish GitHub release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag \
+            --title "ECR Credential Sync ${GITHUB_REF_NAME#v}" \
+            --notes 'Maintained ECR credential synchronization runtime published from a pure numeric version, with tests, vulnerability gate, SBOMs, checksums, and build provenance.' \
+            "dist/release/ecr-credential-sync-${GITHUB_REF_NAME#v}-linux-amd64.tar.xz" \
+            "dist/release/ecr-credential-sync-${GITHUB_REF_NAME#v}-image.cdx.json" \
+            "dist/release/ecr-credential-sync-${GITHUB_REF_NAME#v}-source.cdx.json" \
+            "dist/release/ecr-credential-sync-${GITHUB_REF_NAME#v}-runtime-build.json" \
+            dist/release/SHA256SUMS
+
+      - name: Clean run-owned resources
+        if: always()
+        shell: bash
+        run: |
+          set +e
+          docker logout ghcr.io >/dev/null 2>&1
+          if [ -n "${RELEASE_BUILDER:-}" ]; then
+            "$LOCKED_BUILDX" rm "$RELEASE_BUILDER" >/dev/null 2>&1
+          fi
+          for image in "${RUNTIME_IMAGE:-}" "$DAPPER_IMAGE" "$TRIVY_IMAGE"; do
+            if [ -n "$image" ] && docker image inspect "$image" >/dev/null 2>&1; then
+              docker image rm -f "$image" >/dev/null 2>&1
+            fi
+          done
+          rm -rf -- bin dist \
+            "$RUNNER_TEMP/ecr-release-buildx" \
+            "$RUNNER_TEMP/ecr-release-docker-config" \
+            "$RUNNER_TEMP/ecr-release-trivy-cache"

@@ -69,7 +69,7 @@ docker run --rm \
   -e PLATFORM_URL \
   -e PLATFORM_ACCESS_KEY \
   -e PLATFORM_SECRET_KEY \
-ghcr.io/pasturestack/ecr-credential-sync:v3.1.0
+ghcr.io/pasturestack/ecr-credential-sync:v3.1.3
 ```
 
 Windows Server 2022 hosts use
@@ -78,7 +78,7 @@ identifies the platform, while the tag remains pure numeric. This coordinate
 is an exact manifest alias of the already reviewed Windows build
 (`sha256:937b0f642694c6e6638486ec98aa786b82083a12848fd7c0764c1a4ebf718ee5`),
 so the naming correction does not change image bytes. Linux deployments
-continue to use `v3.1.0`.
+continue to use `v3.1.3`.
 
 Do not publish a mutable `latest` tag. Deployment examples and Catalog
 templates use immutable semantic version tags; release digests are retained
@@ -171,8 +171,8 @@ The development packaging harness must use this exact command for builder
 create, inspect, and removal, and pass it to `make` with the pinned builder.
 
 ```bash
-VERSION_OVERRIDE=v3.1.0 ARCH=amd64 make build
-VERSION_OVERRIDE=v3.1.0 ARCH=amd64 make test
+VERSION_OVERRIDE=v3.1.3 ARCH=amd64 make build
+VERSION_OVERRIDE=v3.1.3 ARCH=amd64 make test
 ```
 
 These commands are local build and test targets. CI/CD publication and release

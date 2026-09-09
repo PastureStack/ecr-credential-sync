@@ -6,6 +6,16 @@
 > below describe the environment at the time of each original release. New
 > PastureStack maintenance changes are recorded in the preserved Git history.
 
+## v3.1.3 (2026/09/09)
+
+- Rebuild the maintained Linux runtime and build tooling with current patched
+  gRPC, text, archive, and module dependencies.
+- Refresh checksum-pinned Ubuntu package inputs and preserve deterministic
+  source, binary, image, SBOM, and vulnerability evidence.
+- Publish the Linux image and release assets from one annotated, pure numeric
+  SemVer tag. The Windows package remains separately identified by its package
+  name and keeps a pure numeric tag.
+
 ## v3.1.0 (2026/07/25)
 
 - Replace the broad generated control-plane client with a bounded minimal

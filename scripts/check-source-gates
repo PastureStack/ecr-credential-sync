@@ -455,7 +455,9 @@ require_marker main.go 'AWS_ECR_ENDPOINT_URL' ECR_SYNC_ECR_ENDPOINT_OVERRIDE_MIS
 require_marker main.go 'errors.Join(synchronizationErrors...)' ECR_SYNC_PLATFORM_FAILURE_RETRY_MISSING
 require_marker main.go 'defaultCredentialEmail = "not-required@invalid"' ECR_SYNC_RESERVED_EMAIL_MISSING
 require_marker internal/platformapi/client.go 'endpoint := service.client.baseURL + "/registryCredentials/" + url.PathEscape(existing.ID)' ECR_SYNC_UNTRUSTED_SELF_LINK_NOT_IGNORED
-require_marker README.md 'ghcr.io/pasturestack/ecr-credential-sync:v3.1.0' ECR_SYNC_README_VERSION_TAG_MISSING
+require_marker README.md 'ghcr.io/pasturestack/ecr-credential-sync:v3.1.3' ECR_SYNC_README_VERSION_TAG_MISSING
+require_marker .github/workflows/release.yml '[[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]' ECR_SYNC_NUMERIC_RELEASE_GATE_MISSING
+require_marker .github/workflows/supply-chain.yml '            .github/workflows/release.yml \' ECR_SYNC_RELEASE_WORKFLOW_SOURCE_INPUT_MISSING
 
 if ! (
   set -euo pipefail
