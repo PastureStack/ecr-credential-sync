@@ -138,8 +138,19 @@ def main() -> int:
         type=Path,
         default=Path("ubuntu-apt.lock"),
     )
+    parser.add_argument("--version", required=True)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
+    version_parts = args.version.split(".")
+    if len(version_parts) != 3 or any(
+        not part or not part.isascii() or not part.isdecimal()
+        for part in version_parts
+    ):
+        parser.error("--version must be a pure numeric semantic version")
+
+    component_purl = (
+        f"pkg:github/PastureStack/ecr-credential-sync@{args.version}"
+    )
 
     lock_text = args.lock.read_text(encoding="utf-8")
     lock_bytes = lock_text.replace("\r\n", "\n").replace("\r", "\n").encode("utf-8")
@@ -152,6 +163,7 @@ def main() -> int:
     serial = uuid.uuid5(
         uuid.NAMESPACE_URL,
         "pasturestack:ecr-credential-sync:"
+        f"{args.version}:"
         f"{lock_digest}:{host_toolchain_digest}:{ubuntu_apt_digest}:"
         f"{DAPPER_GO_VERSION}:{DAPPER_GO_TELEMETRY_MODE}:"
         f"{DAPPER_GO_TELEMETRY_DIRECTORY}:"
@@ -187,11 +199,11 @@ def main() -> int:
         "metadata": {
             "component": {
                 "type": "application",
-                "bom-ref": "pkg:github/PastureStack/ecr-credential-sync@3.1.3",
+                "bom-ref": component_purl,
                 "group": "PastureStack",
                 "name": "ecr-credential-sync",
-                "version": "3.1.3",
-                "purl": "pkg:github/PastureStack/ecr-credential-sync@3.1.3",
+                "version": args.version,
+                "purl": component_purl,
             },
             "properties": [
                 {
@@ -335,7 +347,7 @@ def main() -> int:
         "components": components,
         "dependencies": [
             {
-                "ref": "pkg:github/PastureStack/ecr-credential-sync@3.1.3",
+                "ref": component_purl,
                 "dependsOn": [component["bom-ref"] for component in components],
             },
             *[
