@@ -577,7 +577,7 @@ jobs:
             /usr/share/pasturestack/manifests/docker-cli-go-version.txt \
             > evidence/docker-cli-go-version.txt
           test "$(awk 'NR == 1 { print $NF }' evidence/docker-cli-go-version.txt)" = 'go1.27.0'
-          grep -F $'dep\tgolang.org/x/text\tv0.40.0\t' evidence/docker-cli-go-version.txt >/dev/null
+          grep -F $'dep\tgolang.org/x/text\tv0.41.0\t' evidence/docker-cli-go-version.txt >/dev/null
           grep -F $'dep\tgoogle.golang.org/grpc\tv1.83.2\t' evidence/docker-cli-go-version.txt >/dev/null
           docker run --rm --entrypoint cat "$DAPPER_IMAGE" \
             /usr/share/pasturestack/manifests/buildx-go-version.txt \
