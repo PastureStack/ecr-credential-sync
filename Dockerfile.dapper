@@ -49,7 +49,8 @@ ARG DOCKER_GIT_COMMIT=a7dcaa6fdb6ed04aacbfdc76357fdae01605609e
 ARG DOCKER_SOURCE_DATE_EPOCH=1785922455
 ARG DOCKER_SOURCE_SHA256=6e5c91d3a5a79db78cf989d07727d00e757aa0da4d135a3ce4b86061b83fb511
 ARG DOCKER_X_TEXT_VERSION=v0.40.0
-ARG DOCKER_GRPC_VERSION=v1.82.1
+ARG DOCKER_UPSTREAM_GRPC_VERSION=v1.82.1
+ARG DOCKER_GRPC_VERSION=v1.83.2
 ARG BUILDX_VERSION=0.36.1
 ARG BUILDX_GIT_COMMIT=1d8dde89b8aba914e05e45366770736fea1fd690
 ARG BUILDX_SOURCE_DATE_EPOCH=1785856317
@@ -162,9 +163,11 @@ RUN set -eux; \
     tar -xzf /tmp/docker-cli.tar.gz -C /tmp/docker-cli-src --strip-components=1; \
     cd /tmp/docker-cli-src; \
     grep -F "golang.org/x/text ${DOCKER_X_TEXT_VERSION}" vendor.mod; \
-    grep -F "google.golang.org/grpc ${DOCKER_GRPC_VERSION}" vendor.mod; \
+    grep -F "google.golang.org/grpc ${DOCKER_UPSTREAM_GRPC_VERSION}" vendor.mod; \
     cp vendor.mod go.mod; \
     cp vendor.sum go.sum; \
+    GO111MODULE=on GOPROXY=https://proxy.golang.org GOSUMDB=sum.golang.org GOMODCACHE=/tmp/docker-go-mod \
+        go get "google.golang.org/grpc@${DOCKER_GRPC_VERSION}"; \
     GO111MODULE=on GOPROXY=https://proxy.golang.org GOSUMDB=sum.golang.org GOMODCACHE=/tmp/docker-go-mod go mod download; \
     GO111MODULE=on GOPROXY=off GOSUMDB=sum.golang.org GOMODCACHE=/tmp/docker-go-mod go mod verify; \
     docker_build_time="$(date -u --date="@${DOCKER_SOURCE_DATE_EPOCH}" +'%Y-%m-%dT%H:%M:%SZ')"; \
