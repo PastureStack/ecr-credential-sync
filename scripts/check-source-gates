@@ -300,6 +300,10 @@ require_marker Makefile '-e RUNTIME_IMAGE_BUILD_TOKEN' ECR_SYNC_RUNTIME_BUILD_TO
 require_marker Dockerfile.dapper 'RUNTIME_IMAGE_BUILD_TOKEN' ECR_SYNC_RUNTIME_BUILD_TOKEN_NOT_DECLARED
 require_marker Dockerfile.dapper 'ARG SOURCE_DATE_EPOCH' ECR_SYNC_DAPPER_DOCKERFILE_SOURCE_EPOCH_MISSING
 require_marker Dockerfile.dapper 'touch --no-dereference --date="@${SOURCE_DATE_EPOCH}" /snapshot-ca-certificates.crt' ECR_SYNC_DAPPER_CA_MTIME_NORMALIZATION_MISSING
+require_marker Dockerfile.dapper 'FROM ${UBUNTU_IMAGE} AS dapper-base' ECR_SYNC_DAPPER_BASE_STAGE_MISSING
+require_marker Dockerfile.dapper 'FROM dapper-base AS buildx-builder' ECR_SYNC_DAPPER_BUILDX_BUILDER_STAGE_MISSING
+require_marker Dockerfile.dapper 'FROM dapper-base AS dapper-final' ECR_SYNC_DAPPER_FINAL_STAGE_MISSING
+require_marker Dockerfile.dapper 'COPY --from=buildx-builder --chown=0:0 --chmod=0555' ECR_SYNC_DAPPER_BUILDX_COPY_BOUNDARY_MISSING
 require_marker .github/workflows/supply-chain.yml 'create_dapper_builder "$first_dapper_builder" dapper-first' ECR_SYNC_DAPPER_ISOLATED_FIRST_BUILD_MISSING
 require_marker .github/workflows/supply-chain.yml 'create_dapper_builder "$second_dapper_builder" dapper-second' ECR_SYNC_DAPPER_ISOLATED_SECOND_BUILD_MISSING
 require_marker .github/workflows/supply-chain.yml 'DAPPER_NO_CACHE=true' ECR_SYNC_DAPPER_NO_CACHE_PROOF_MISSING
