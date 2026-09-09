@@ -40,7 +40,7 @@ jobs:
           set -euo pipefail
           umask 077
           source toolchain/host-build-toolchain.lock
-          test "$HOST_BUILDX_INSTALL_METHOD" = repository-locked-offline-source-builder
+          test "$HOST_BUILDX_INSTALL_METHOD" = repository-locked-source-builder
           test "$HOST_BUILDX_INSTALLER_PATH" = scripts/install-locked-host-buildx
           test "$HOST_BUILDX_PLUGIN_RELATIVE_PATH" = cli-plugins/docker-buildx
           for required_command in chmod cp find grep id mkdir realpath sha256sum stat; do
@@ -746,8 +746,10 @@ jobs:
             exact_property("pasturestack:host-buildx-go-sha256"; "675c26c449cbb18fc24b74650de1eabbae6e16f64326fd85a283fb3b58280685") and
             exact_property("pasturestack:host-buildx-go-archive-version"; "v0.3.0") and
             exact_property("pasturestack:host-buildx-x-mod-version"; "v0.40.0") and
-            exact_property("pasturestack:host-buildx-binary-sha256"; "6bd2cb8809abf99fd2a0acaf50a51b85e9a4b254cc9bfede6305e85f42c59eb2") and
-            exact_property("pasturestack:host-buildx-install-method"; "repository-locked-offline-source-builder")
+            exact_property("pasturestack:host-buildx-upstream-grpc-version"; "v1.82.1") and
+            exact_property("pasturestack:host-buildx-grpc-version"; "v1.83.2") and
+            exact_property("pasturestack:host-buildx-binary-sha256"; "05d6007425f3ec0c9bcf10aad49034e4342c34bd63ecd1cb0ac89ddfdf934c79") and
+            exact_property("pasturestack:host-buildx-install-method"; "repository-locked-source-builder")
           ' evidence/source.cdx.json >/dev/null
           docker run --rm \
             --volume "$PWD/evidence:/evidence" \
