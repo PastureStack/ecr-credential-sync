@@ -6,6 +6,13 @@
 > below describe the environment at the time of each original release. New
 > PastureStack maintenance changes are recorded in the preserved Git history.
 
+## v3.1.5 (2026/09/10)
+
+- Bind the source CycloneDX component version and serial number to the exact
+  numeric release version supplied by the validated build workflow.
+- Update the maintained Linux image examples to the current pure numeric
+  release coordinate.
+
 ## v3.1.3 (2026/09/09)
 
 - Rebuild the maintained Linux runtime and build tooling with current patched

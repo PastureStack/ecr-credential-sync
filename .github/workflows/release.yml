@@ -125,7 +125,15 @@ jobs:
             "$TRIVY_IMAGE" image --skip-db-update --offline-scan --format cyclonedx \
             --output "/release/ecr-credential-sync-${RELEASE_TAG#v}-image.cdx.json" "$RUNTIME_IMAGE"
           python3 scripts/generate-source-sbom.py \
+            --version "${RELEASE_TAG#v}" \
             --output "$release_dir/ecr-credential-sync-${RELEASE_TAG#v}-source.cdx.json"
+          jq -e --arg version "${RELEASE_TAG#v}" '
+            .metadata.component.version == $version and
+            .metadata.component["bom-ref"] ==
+              ("pkg:github/PastureStack/ecr-credential-sync@" + $version) and
+            .metadata.component.purl ==
+              ("pkg:github/PastureStack/ecr-credential-sync@" + $version)
+          ' "$release_dir/ecr-credential-sync-${RELEASE_TAG#v}-source.cdx.json" >/dev/null
           cp dist/runtime-image-build.json \
             "$release_dir/ecr-credential-sync-${RELEASE_TAG#v}-runtime-build.json"
           for sbom in "$release_dir"/*.cdx.json; do
