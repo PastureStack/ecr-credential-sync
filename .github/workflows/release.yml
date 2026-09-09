@@ -166,8 +166,8 @@ jobs:
           set -euo pipefail
           printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
           docker push "$RUNTIME_IMAGE"
-          reference="$(docker image inspect --format '{{index .RepoDigests 0}}' "$RUNTIME_IMAGE")"
-          digest="${reference#*@}"
+          digest="$("$LOCKED_BUILDX" imagetools inspect "$RUNTIME_IMAGE" \
+            --format '{{.Manifest.Digest}}')"
           [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
           printf 'digest=%s\n' "$digest" >> "$GITHUB_OUTPUT"
 
