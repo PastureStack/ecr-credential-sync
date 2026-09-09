@@ -379,6 +379,8 @@ require_marker scripts/test-install-locked-host-buildx 'global-plugin-destinatio
 require_marker scripts/test-install-locked-host-buildx 'download-failure' ECR_SYNC_LOCKED_BUILDX_DOWNLOAD_REGRESSION_MISSING
 require_marker scripts/check-buildx-module-versions 'legacy_docker_module=absent' ECR_SYNC_BUILDX_MODULE_CHECKER_LEGACY_GATE_MISSING
 require_marker scripts/check-buildx-module-versions 'dependency-records-not-exact' ECR_SYNC_BUILDX_MODULE_EXACT_GATE_MISSING
+require_marker scripts/check-buildx-module-versions 'length($5) != 47' ECR_SYNC_BUILDX_MODULE_CHECKSUM_LENGTH_GATE_MISSING
+require_marker scripts/test-buildx-module-versions 'invalid-checksum' ECR_SYNC_BUILDX_MODULE_CHECKSUM_REGRESSION_FIXTURE_MISSING
 require_marker scripts/test-buildx-module-versions 'cve-2026-17106' ECR_SYNC_BUILDX_MODULE_GO_ARCHIVE_CVE_FIXTURE_MISSING
 require_marker scripts/test-buildx-module-versions 'cve-2026-56864' ECR_SYNC_BUILDX_MODULE_X_MOD_FIRST_CVE_FIXTURE_MISSING
 require_marker scripts/test-buildx-module-versions 'cve-2026-56865' ECR_SYNC_BUILDX_MODULE_X_MOD_SECOND_CVE_FIXTURE_MISSING

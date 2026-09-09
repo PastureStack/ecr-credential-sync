@@ -39,19 +39,22 @@ if ! awk -F '\t' \
       NR == 1 { next }
       $2 == "dep" && $3 == "github.com/moby/go-archive" {
         go_archive_count++
-        if (NF != 5 || $1 != "" || $4 != expected_go_archive || $5 != "") {
+        if (NF != 5 || $1 != "" || $4 != expected_go_archive ||
+            length($5) != 47 || $5 !~ /^h1:[A-Za-z0-9+\/]+=$/) {
           invalid = 1
         }
       }
       $2 == "dep" && $3 == "golang.org/x/mod" {
         x_mod_count++
-        if (NF != 5 || $1 != "" || $4 != expected_x_mod || $5 != "") {
+        if (NF != 5 || $1 != "" || $4 != expected_x_mod ||
+            length($5) != 47 || $5 !~ /^h1:[A-Za-z0-9+\/]+=$/) {
           invalid = 1
         }
       }
       $2 == "dep" && $3 == "google.golang.org/grpc" {
         grpc_count++
-        if (NF != 5 || $1 != "" || $4 != expected_grpc || $5 != "") {
+        if (NF != 5 || $1 != "" || $4 != expected_grpc ||
+            length($5) != 47 || $5 !~ /^h1:[A-Za-z0-9+\/]+=$/) {
           invalid = 1
         }
       }

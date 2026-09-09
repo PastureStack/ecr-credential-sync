@@ -16,9 +16,9 @@ write_manifest() {
     printf 'fixture/docker-buildx: go1.27.0\n'
     printf '\tpath\tgithub.com/docker/buildx/cmd/buildx\n'
     printf '\tmod\tgithub.com/docker/buildx\t(devel)\t\n'
-    printf '\tdep\tgithub.com/moby/go-archive\t%s\t\n' "$go_archive_version"
-    printf '\tdep\tgolang.org/x/mod\t%s\t\n' "$x_mod_version"
-    printf '\tdep\tgoogle.golang.org/grpc\t%s\t\n' "$grpc_version"
+    printf '\tdep\tgithub.com/moby/go-archive\t%s\th1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\n' "$go_archive_version"
+    printf '\tdep\tgolang.org/x/mod\t%s\th1:BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=\n' "$x_mod_version"
+    printf '\tdep\tgoogle.golang.org/grpc\t%s\th1:CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC=\n' "$grpc_version"
   } > "$path"
 }
 
@@ -86,4 +86,10 @@ write_manifest "$compiler" v0.3.0 v0.40.0 v1.83.2
 expect_failure compiler-mismatch compiler-mismatch \
   bash "$checker" "$compiler" go1.26.6 v0.3.0 v0.40.0 v1.83.2
 
-printf 'ECR_SYNC_BUILDX_MODULE_FIXTURES_OK positive=1 negative=10 cves=5\n'
+invalid_checksum="${fixture_root}/invalid-checksum.txt"
+write_manifest "$invalid_checksum" v0.3.0 v0.40.0 v1.83.2
+sed -i 's/h1:CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC=/unverified/' "$invalid_checksum"
+expect_failure invalid-checksum dependency-records-not-exact \
+  bash "$checker" "$invalid_checksum" go1.27.0 v0.3.0 v0.40.0 v1.83.2
+
+printf 'ECR_SYNC_BUILDX_MODULE_FIXTURES_OK positive=1 negative=11 cves=5\n'

@@ -78,9 +78,9 @@ case "${1-}" in
       printf '%s: go1.27.0\n' "$3"
       printf '\tpath\tgithub.com/docker/buildx/cmd/buildx\n'
       printf '\tmod\tgithub.com/docker/buildx\t(devel)\t\n'
-      printf '\tdep\tgithub.com/moby/go-archive\t%s\t\n' "$go_archive"
-      printf '\tdep\tgolang.org/x/mod\t%s\t\n' "$x_mod"
-      printf '\tdep\tgoogle.golang.org/grpc\t%s\t\n' "$grpc"
+      printf '\tdep\tgithub.com/moby/go-archive\t%s\th1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\n' "$go_archive"
+      printf '\tdep\tgolang.org/x/mod\t%s\th1:BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=\n' "$x_mod"
+      printf '\tdep\tgoogle.golang.org/grpc\t%s\th1:CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC=\n' "$grpc"
       exit 0
     fi
     ;;
