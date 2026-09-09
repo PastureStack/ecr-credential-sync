@@ -75,8 +75,8 @@ the test suite never waits on production delays.
   revalidates the exact two run-root paths, identities, owners, and mode `0700`
   before deleting only those directories. As of 2026-09-09, the latest signed
   upstream Buildx release remains `v0.36.1`; its official binary contains
-  `go-archive v0.2.1`, `x/mod v0.38.0`, and `grpc v1.82.1`, and no signed fixed
-  release exists.
+  `go-archive v0.2.1`, `x/mod v0.38.0`, and `grpc v1.82.1`; no signed fixed release exists
+  for all three modules.
   The same locked upgrade is therefore required for both host and Dapper
   binaries; these CVEs must not be suppressed with OpenVEX.
 - Every Dapper export records its manifest digest separately. The Buildx IID

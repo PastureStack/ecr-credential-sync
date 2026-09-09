@@ -379,7 +379,7 @@ prepare_and_build() {
       "$go_bin" get "google.golang.org/grpc@${HOST_BUILDX_GRPC_VERSION}"
     GOMODCACHE="$module_cache_root" GOPROXY=https://proxy.golang.org \
       "$go_bin" mod download
-    GOMODCACHE="$module_cache_root" GOPROXY=off "$go_bin" mod verify
+    GOMODCACHE="$module_cache_root" GOPROXY=off "$go_bin" mod verify >&2
     [ "$(GOMODCACHE="$module_cache_root" GOPROXY=off \
       "$go_bin" list -mod=mod -m -f '{{.Version}}' google.golang.org/grpc)" = \
       "$HOST_BUILDX_GRPC_VERSION" ]

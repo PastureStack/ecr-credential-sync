@@ -90,7 +90,13 @@ case "${1-}" in
     exit 0
     ;;
   mod)
-    case "${2-}" in download|verify) exit 0 ;; esac
+    case "${2-}" in
+      download) exit 0 ;;
+      verify)
+        printf 'all modules verified\n'
+        exit 0
+        ;;
+    esac
     exit 64
     ;;
   list)
