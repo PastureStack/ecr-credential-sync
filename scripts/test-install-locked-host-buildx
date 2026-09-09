@@ -4,7 +4,7 @@ set -euo pipefail
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
 # shellcheck disable=SC1091
 source "$repo_root/toolchain/host-build-toolchain.lock"
-test "$HOST_BUILDX_INSTALL_METHOD" = repository-locked-offline-source-builder
+test "$HOST_BUILDX_INSTALL_METHOD" = repository-locked-source-builder
 test "$HOST_BUILDX_INSTALLER_PATH" = scripts/install-locked-host-buildx
 test "$HOST_BUILDX_PLUGIN_RELATIVE_PATH" = cli-plugins/docker-buildx
 fixture_root=$(mktemp -d)
@@ -34,6 +34,7 @@ create_case() {
     "$fixture_destination" \
     "$fixture_go_tree/go/bin" \
     "$fixture_source_tree/buildx-${HOST_BUILDX_COMMIT}/vendor"
+  chmod 0700 "$fixture_destination"
   cp "$repo_root/scripts/install-locked-host-buildx" "$fixture_installer"
   cp "$repo_root/scripts/check-buildx-module-versions" \
     "$fixture_repo/scripts/check-buildx-module-versions"
@@ -68,20 +69,42 @@ case "${1-}" in
     if [ "$#" -eq 3 ] && [ "$2" = -m ]; then
       go_archive=v0.3.0
       x_mod=v0.40.0
+      grpc=v1.83.2
       case "${FIXTURE_CASE:-success}" in
         cve-2026-17106) go_archive=v0.2.1 ;;
         cve-2026-56864|cve-2026-56865) x_mod=v0.38.0 ;;
+        cve-2026-84304|cve-2026-84445) grpc=v1.82.1 ;;
       esac
       printf '%s: go1.27.0\n' "$3"
       printf '\tpath\tgithub.com/docker/buildx/cmd/buildx\n'
       printf '\tmod\tgithub.com/docker/buildx\t(devel)\t\n'
-      printf '\tdep\tgithub.com/moby/go-archive\t%s\t\n' "$go_archive"
-      printf '\tdep\tgolang.org/x/mod\t%s\t\n' "$x_mod"
+      printf '\tdep\tgithub.com/moby/go-archive\t%s\th1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\n' "$go_archive"
+      printf '\tdep\tgolang.org/x/mod\t%s\th1:BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=\n' "$x_mod"
+      printf '\tdep\tgoogle.golang.org/grpc\t%s\th1:CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC=\n' "$grpc"
       exit 0
     fi
     ;;
+  get)
+    [ "${2-}" = google.golang.org/grpc@v1.83.2 ]
+    sed -i 's#google.golang.org/grpc v1.82.1#google.golang.org/grpc v1.83.2#' go.mod
+    exit 0
+    ;;
+  mod)
+    case "${2-}" in
+      download) exit 0 ;;
+      verify)
+        printf 'all modules verified\n'
+        exit 0
+        ;;
+    esac
+    exit 64
+    ;;
   list)
-    printf '%s\n' github.com/docker/buildx/cmd/buildx github.com/moby/go-archive golang.org/x/mod
+    if printf '%s\n' "$@" | grep -Fxq -- -m; then
+      printf '%s\n' v1.83.2
+      exit 0
+    fi
+    printf '%s\n' github.com/docker/buildx/cmd/buildx github.com/moby/go-archive golang.org/x/mod google.golang.org/grpc
     exit 0
     ;;
   build)
@@ -128,6 +151,7 @@ require (
 	github.com/docker/docker v28.5.2+incompatible
 	github.com/moby/go-archive v0.2.1
 	golang.org/x/mod v0.38.0
+	google.golang.org/grpc v1.82.1
 )
 EOF
   cat > "$fixture_source_tree/buildx-${HOST_BUILDX_COMMIT}/vendor/modules.txt" <<'EOF'
@@ -269,14 +293,17 @@ expect_clean_build_failure() {
 }
 
 create_case success
-installed_path=$(run_installer 2>"${case_root}/success.stderr")
+if ! installed_path=$(run_installer 2>"${case_root}/success.stderr"); then
+  cat "${case_root}/success.stderr" >&2
+  exit 1
+fi
 test "$installed_path" = "${fixture_destination}/bin/docker-buildx"
 test -x "$installed_path"
 test "$(stat -c '%a' "$installed_path")" = 555
 test "$("$installed_path" version)" = \
   'github.com/docker/buildx v0.36.1 1d8dde89b8aba914e05e45366770736fea1fd690'
 bash "${fixture_repo}/scripts/check-buildx-module-versions" \
-  "${fixture_destination}/buildx-go-version.txt" go1.27.0 v0.3.0 v0.40.0 >/dev/null
+  "${fixture_destination}/buildx-go-version.txt" go1.27.0 v0.3.0 v0.40.0 v1.83.2 >/dev/null
 test "$(grep -Fc $'binary\tbuildx-first\tv0.36.1\t' "${fixture_destination}/buildx-build.tsv")" -eq 1
 test "$(grep -Fc $'binary\tbuildx-second\tv0.36.1\t' "${fixture_destination}/buildx-build.tsv")" -eq 1
 test "$(find "$fixture_destination" -mindepth 1 -maxdepth 1 -printf '%f\n' | LC_ALL=C sort)" = \
@@ -310,13 +337,13 @@ FIXTURE_CASE=reproducibility-mismatch \
 
 create_case build-failure
 FIXTURE_CASE=build-failure \
-  expect_clean_build_failure build-failure offline-build-failed run_installer
+  expect_clean_build_failure build-failure build-failed run_installer
 
 create_case patch-apply-failure
 FIXTURE_CASE=patch-apply-failure \
   expect_clean_build_failure patch-apply-failure security-patch-apply-failed run_installer
 
-for cve in cve-2026-17106 cve-2026-56864 cve-2026-56865; do
+for cve in cve-2026-17106 cve-2026-56864 cve-2026-56865 cve-2026-84304 cve-2026-84445; do
   create_case "$cve"
   FIXTURE_CASE="$cve" \
     expect_clean_build_failure "$cve" dependency-records-not-exact run_installer
@@ -361,4 +388,4 @@ create_case download-failure
 FIXTURE_DOWNLOAD_FAIL=1 \
   expect_clean_build_failure download-failure go-download-failed run_installer
 
-printf 'ECR_SYNC_LOCKED_HOST_BUILDX_FIXTURES_OK positive=1 negative=18 cves=3 source_builds=2 cleanup=exact-run-owned\n'
+printf 'ECR_SYNC_LOCKED_HOST_BUILDX_FIXTURES_OK positive=1 negative=20 cves=5 source_builds=2 cleanup=exact-run-owned\n'

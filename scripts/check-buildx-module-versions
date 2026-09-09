@@ -6,8 +6,8 @@ fail() {
   exit 1
 }
 
-if [ "$#" -ne 4 ]; then
-  printf 'usage: %s GO_VERSION_M_OUTPUT EXPECTED_COMPILER EXPECTED_GO_ARCHIVE_VERSION EXPECTED_X_MOD_VERSION\n' "$0" >&2
+if [ "$#" -ne 5 ]; then
+  printf 'usage: %s GO_VERSION_M_OUTPUT EXPECTED_COMPILER EXPECTED_GO_ARCHIVE_VERSION EXPECTED_X_MOD_VERSION EXPECTED_GRPC_VERSION\n' "$0" >&2
   exit 64
 fi
 
@@ -15,6 +15,7 @@ manifest=$1
 expected_compiler=$2
 expected_go_archive=$3
 expected_x_mod=$4
+expected_grpc=$5
 
 [ -f "$manifest" ] || fail manifest-not-regular-file
 [ ! -L "$manifest" ] || fail manifest-is-symlink
@@ -23,6 +24,7 @@ expected_x_mod=$4
 [[ "$expected_go_archive" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || \
   fail expected-go-archive-version-malformed
 [[ "$expected_x_mod" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail expected-x-mod-version-malformed
+[[ "$expected_grpc" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail expected-grpc-version-malformed
 
 first_line=$(head -n 1 -- "$manifest") || fail compiler-readback-failed
 case "$first_line" in
@@ -32,17 +34,27 @@ esac
 
 if ! awk -F '\t' \
     -v expected_go_archive="$expected_go_archive" \
-    -v expected_x_mod="$expected_x_mod" '
+    -v expected_x_mod="$expected_x_mod" \
+    -v expected_grpc="$expected_grpc" '
       NR == 1 { next }
       $2 == "dep" && $3 == "github.com/moby/go-archive" {
         go_archive_count++
-        if (NF != 5 || $1 != "" || $4 != expected_go_archive || $5 != "") {
+        if (NF != 5 || $1 != "" || $4 != expected_go_archive ||
+            length($5) != 47 || $5 !~ /^h1:[A-Za-z0-9+\/]+=$/) {
           invalid = 1
         }
       }
       $2 == "dep" && $3 == "golang.org/x/mod" {
         x_mod_count++
-        if (NF != 5 || $1 != "" || $4 != expected_x_mod || $5 != "") {
+        if (NF != 5 || $1 != "" || $4 != expected_x_mod ||
+            length($5) != 47 || $5 !~ /^h1:[A-Za-z0-9+\/]+=$/) {
+          invalid = 1
+        }
+      }
+      $2 == "dep" && $3 == "google.golang.org/grpc" {
+        grpc_count++
+        if (NF != 5 || $1 != "" || $4 != expected_grpc ||
+            length($5) != 47 || $5 !~ /^h1:[A-Za-z0-9+\/]+=$/) {
           invalid = 1
         }
       }
@@ -50,7 +62,7 @@ if ! awk -F '\t' \
         invalid = 1
       }
       END {
-        if (invalid || go_archive_count != 1 || x_mod_count != 1) {
+        if (invalid || go_archive_count != 1 || x_mod_count != 1 || grpc_count != 1) {
           exit 1
         }
       }
@@ -58,5 +70,5 @@ if ! awk -F '\t' \
   fail dependency-records-not-exact
 fi
 
-printf 'ECR_SYNC_BUILDX_MODULES_OK compiler=%s go_archive=%s x_mod=%s legacy_docker_module=absent\n' \
-  "$expected_compiler" "$expected_go_archive" "$expected_x_mod"
+printf 'ECR_SYNC_BUILDX_MODULES_OK compiler=%s go_archive=%s x_mod=%s grpc=%s legacy_docker_module=absent\n' \
+  "$expected_compiler" "$expected_go_archive" "$expected_x_mod" "$expected_grpc"

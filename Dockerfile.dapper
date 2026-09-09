@@ -5,7 +5,7 @@ FROM ${UBUNTU_IMAGE} AS snapshot-ca-bootstrap
 ARG SOURCE_DATE_EPOCH
 
 ADD --checksum=sha256:6077d27c6b6f8b23590cb01ff877ed8c804a67a5442cc32b5a33da10d2bd0e90 \
-    https://snapshot.ubuntu.com/ubuntu/20260825T000000Z/pool/main/c/ca-certificates/ca-certificates_20260601~26.04.1_all.deb \
+    https://snapshot.ubuntu.com/ubuntu/20260909T000000Z/pool/main/c/ca-certificates/ca-certificates_20260601~26.04.1_all.deb \
     /tmp/ca-certificates.deb
 
 RUN set -eux; \
@@ -48,8 +48,10 @@ ARG DOCKER_VERSION=29.7.2
 ARG DOCKER_GIT_COMMIT=a7dcaa6fdb6ed04aacbfdc76357fdae01605609e
 ARG DOCKER_SOURCE_DATE_EPOCH=1785922455
 ARG DOCKER_SOURCE_SHA256=6e5c91d3a5a79db78cf989d07727d00e757aa0da4d135a3ce4b86061b83fb511
-ARG DOCKER_X_TEXT_VERSION=v0.40.0
-ARG DOCKER_GRPC_VERSION=v1.82.1
+ARG DOCKER_UPSTREAM_X_TEXT_VERSION=v0.40.0
+ARG DOCKER_X_TEXT_VERSION=v0.41.0
+ARG DOCKER_UPSTREAM_GRPC_VERSION=v1.82.1
+ARG DOCKER_GRPC_VERSION=v1.83.2
 ARG BUILDX_VERSION=0.36.1
 ARG BUILDX_GIT_COMMIT=1d8dde89b8aba914e05e45366770736fea1fd690
 ARG BUILDX_SOURCE_DATE_EPOCH=1785856317
@@ -57,7 +59,9 @@ ARG BUILDX_SOURCE_SHA256=fb28b5c2a198d05482f0656dfb7ee161240a904e36697bf7108e5d5
 ARG BUILDX_SECURITY_PATCH_SHA256=a29fdda204d592d0d46ed32b5fdc4336a7b3a7276301836d0a75b9386ca780f7
 ARG BUILDX_GO_ARCHIVE_VERSION=v0.3.0
 ARG BUILDX_X_MOD_VERSION=v0.40.0
-ARG UBUNTU_APT_SNAPSHOT=20260825T000000Z
+ARG BUILDX_UPSTREAM_GRPC_VERSION=v1.82.1
+ARG BUILDX_GRPC_VERSION=v1.83.2
+ARG UBUNTU_APT_SNAPSHOT=20260909T000000Z
 ARG GO_LINUX_AMD64_SHA256=675c26c449cbb18fc24b74650de1eabbae6e16f64326fd85a283fb3b58280685
 ARG GO_LINUX_ARM64_SHA256=51798d2c42d0e1c6ed7fd9f48728b4193abac9e8aad6dbac2fe96a81f5909bda
 
@@ -81,6 +85,7 @@ RUN set -eux; \
         git="${UBUNTU_APT_GIT_VERSION}" \
         jq="${UBUNTU_APT_JQ_VERSION}" \
         libc6-dev="${UBUNTU_APT_LIBC6_DEV_VERSION}" \
+        linux-libc-dev="${UBUNTU_APT_LINUX_LIBC_DEV_VERSION}" \
         make="${UBUNTU_APT_MAKE_VERSION}" \
         tar="${UBUNTU_APT_TAR_VERSION}" \
         xz-utils="${UBUNTU_APT_XZ_UTILS_VERSION}"; \
@@ -92,6 +97,7 @@ RUN set -eux; \
         "git=${UBUNTU_APT_GIT_VERSION}" \
         "jq=${UBUNTU_APT_JQ_VERSION}" \
         "libc6-dev=${UBUNTU_APT_LIBC6_DEV_VERSION}" \
+        "linux-libc-dev=${UBUNTU_APT_LINUX_LIBC_DEV_VERSION}" \
         "make=${UBUNTU_APT_MAKE_VERSION}" \
         "tar=${UBUNTU_APT_TAR_VERSION}" \
         "xz-utils=${UBUNTU_APT_XZ_UTILS_VERSION}"; do \
@@ -159,10 +165,12 @@ RUN set -eux; \
     mkdir -p /tmp/docker-cli-src; \
     tar -xzf /tmp/docker-cli.tar.gz -C /tmp/docker-cli-src --strip-components=1; \
     cd /tmp/docker-cli-src; \
-    grep -F "golang.org/x/text ${DOCKER_X_TEXT_VERSION}" vendor.mod; \
-    grep -F "google.golang.org/grpc ${DOCKER_GRPC_VERSION}" vendor.mod; \
+    grep -F "golang.org/x/text ${DOCKER_UPSTREAM_X_TEXT_VERSION}" vendor.mod; \
+    grep -F "google.golang.org/grpc ${DOCKER_UPSTREAM_GRPC_VERSION}" vendor.mod; \
     cp vendor.mod go.mod; \
     cp vendor.sum go.sum; \
+    GO111MODULE=on GOPROXY=https://proxy.golang.org GOSUMDB=sum.golang.org GOMODCACHE=/tmp/docker-go-mod \
+        go get "golang.org/x/text@${DOCKER_X_TEXT_VERSION}" "google.golang.org/grpc@${DOCKER_GRPC_VERSION}"; \
     GO111MODULE=on GOPROXY=https://proxy.golang.org GOSUMDB=sum.golang.org GOMODCACHE=/tmp/docker-go-mod go mod download; \
     GO111MODULE=on GOPROXY=off GOSUMDB=sum.golang.org GOMODCACHE=/tmp/docker-go-mod go mod verify; \
     docker_build_time="$(date -u --date="@${DOCKER_SOURCE_DATE_EPOCH}" +'%Y-%m-%dT%H:%M:%SZ')"; \
@@ -219,17 +227,23 @@ RUN set -eux; \
     done < /tmp/buildx-patched-go-files.txt; \
     test "$(grep -Fxc "$(printf '\tgithub.com/moby/go-archive %s' "${BUILDX_GO_ARCHIVE_VERSION}")" go.mod)" -eq 1; \
     test "$(grep -Fxc "$(printf '\tgolang.org/x/mod %s' "${BUILDX_X_MOD_VERSION}")" go.mod)" -eq 1; \
+    test "$(grep -Fxc "$(printf '\tgoogle.golang.org/grpc %s' "${BUILDX_UPSTREAM_GRPC_VERSION}")" go.mod)" -eq 1; \
     grep -Fqx "# github.com/moby/go-archive ${BUILDX_GO_ARCHIVE_VERSION}" vendor/modules.txt; \
     grep -Fqx "# golang.org/x/mod ${BUILDX_X_MOD_VERSION}" vendor/modules.txt; \
     if grep -F 'github.com/moby/go-archive v0.2.1' go.mod vendor/modules.txt; then exit 1; fi; \
     if grep -F 'golang.org/x/mod v0.38.0' go.mod vendor/modules.txt; then exit 1; fi; \
-    GO111MODULE=on GOTOOLCHAIN=local GOPROXY=off GOSUMDB=sum.golang.org go list -mod=vendor -buildvcs=false -deps ./cmd/buildx > /tmp/buildx-deps.txt; \
+    GO111MODULE=on GOTOOLCHAIN=local GOWORK=off GOPROXY=https://proxy.golang.org GOSUMDB=sum.golang.org GOMODCACHE=/tmp/buildx-go-mod \
+        go get "google.golang.org/grpc@${BUILDX_GRPC_VERSION}"; \
+    GO111MODULE=on GOTOOLCHAIN=local GOWORK=off GOPROXY=https://proxy.golang.org GOSUMDB=sum.golang.org GOMODCACHE=/tmp/buildx-go-mod go mod download; \
+    GO111MODULE=on GOTOOLCHAIN=local GOWORK=off GOPROXY=off GOSUMDB=sum.golang.org GOMODCACHE=/tmp/buildx-go-mod go mod verify; \
+    test "$(GO111MODULE=on GOTOOLCHAIN=local GOWORK=off GOPROXY=off GOSUMDB=sum.golang.org GOMODCACHE=/tmp/buildx-go-mod go list -mod=mod -m -f '{{.Version}}' google.golang.org/grpc)" = "${BUILDX_GRPC_VERSION}"; \
+    GO111MODULE=on GOTOOLCHAIN=local GOWORK=off GOPROXY=off GOSUMDB=sum.golang.org GOMODCACHE=/tmp/buildx-go-mod go list -mod=mod -buildvcs=false -deps ./cmd/buildx > /tmp/buildx-deps.txt; \
     if grep '^github.com/docker/docker/' /tmp/buildx-deps.txt; then \
         echo 'patched Buildx still compiles github.com/docker/docker' >&2; \
         exit 1; \
     fi; \
-    SOURCE_DATE_EPOCH="${BUILDX_SOURCE_DATE_EPOCH}" CGO_ENABLED=0 GO111MODULE=on GOPROXY=off GOSUMDB=sum.golang.org GOOS=linux GOARCH="${DAPPER_HOST_ARCH}" \
-        go build -mod=vendor -trimpath -buildvcs=false \
+    SOURCE_DATE_EPOCH="${BUILDX_SOURCE_DATE_EPOCH}" CGO_ENABLED=0 GO111MODULE=on GOWORK=off GOPROXY=off GOSUMDB=sum.golang.org GOMODCACHE=/tmp/buildx-go-mod GOOS=linux GOARCH="${DAPPER_HOST_ARCH}" \
+        go build -mod=mod -trimpath -buildvcs=false \
         -ldflags "-s -w -buildid= -X github.com/docker/buildx/version.Version=v${BUILDX_VERSION} -X github.com/docker/buildx/version.Revision=${BUILDX_GIT_COMMIT} -X github.com/docker/buildx/version.Package=github.com/docker/buildx" \
         -o /usr/libexec/docker/cli-plugins/docker-buildx ./cmd/buildx; \
     chmod +x /usr/libexec/docker/cli-plugins/docker-buildx; \
@@ -237,12 +251,12 @@ RUN set -eux; \
     go version -m /usr/libexec/docker/cli-plugins/docker-buildx > /usr/share/pasturestack/manifests/buildx-go-version.txt; \
     bash /usr/local/libexec/pasturestack/check-buildx-module-versions \
         /usr/share/pasturestack/manifests/buildx-go-version.txt \
-        "go${GO_VERSION}" "${BUILDX_GO_ARCHIVE_VERSION}" "${BUILDX_X_MOD_VERSION}"; \
+        "go${GO_VERSION}" "${BUILDX_GO_ARCHIVE_VERSION}" "${BUILDX_X_MOD_VERSION}" "${BUILDX_GRPC_VERSION}"; \
     touch --no-dereference --date="@${SOURCE_DATE_EPOCH}" \
         /usr/libexec/docker/cli-plugins/docker-buildx \
         /usr/share/pasturestack/manifests/buildx-go-version.txt; \
     cd /; \
-    rm -rf /tmp/buildx-src /tmp/buildx.tar.gz /tmp/buildx-deps.txt /tmp/buildx-patched-go-files.txt /tmp/go-build-cache; \
+    rm -rf /tmp/buildx-src /tmp/buildx.tar.gz /tmp/buildx-deps.txt /tmp/buildx-patched-go-files.txt /tmp/buildx-go-mod /tmp/go-build-cache; \
     bash /usr/local/libexec/pasturestack/check-go-telemetry-state /tmp/go-config/go/telemetry "${SOURCE_DATE_EPOCH}" /usr/local/go/bin/go
 
 RUN set -eux; \

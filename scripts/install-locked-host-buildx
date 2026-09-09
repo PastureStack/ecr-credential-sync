@@ -38,6 +38,8 @@ required_lock_keys=(
   HOST_BUILDX_GO_SHA256
   HOST_BUILDX_GO_ARCHIVE_VERSION
   HOST_BUILDX_X_MOD_VERSION
+  HOST_BUILDX_UPSTREAM_GRPC_VERSION
+  HOST_BUILDX_GRPC_VERSION
   HOST_BUILDX_BINARY_SHA256
   HOST_BUILDX_INSTALL_METHOD
 )
@@ -59,12 +61,16 @@ expected_source_url="https://codeload.github.com/docker/buildx/tar.gz/${HOST_BUI
   fail go-filename-version-mismatch
 expected_go_url="https://go.dev/dl/${HOST_BUILDX_GO_FILENAME}"
 [ "$HOST_BUILDX_GO_URL" = "$expected_go_url" ] || fail go-url-not-exact
-[ "$HOST_BUILDX_INSTALL_METHOD" = repository-locked-offline-source-builder ] || \
+[ "$HOST_BUILDX_INSTALL_METHOD" = repository-locked-source-builder ] || \
   fail install-method-mismatch
 [[ "$HOST_BUILDX_GO_ARCHIVE_VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || \
   fail malformed-go-archive-version
 [[ "$HOST_BUILDX_X_MOD_VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || \
   fail malformed-x-mod-version
+[[ "$HOST_BUILDX_UPSTREAM_GRPC_VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || \
+  fail malformed-upstream-grpc-version
+[[ "$HOST_BUILDX_GRPC_VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || \
+  fail malformed-grpc-version
 for digest_name in \
     HOST_BUILDX_SOURCE_SHA256 \
     HOST_BUILDX_SECURITY_PATCH_SHA256 \
@@ -131,7 +137,7 @@ while [ "$path_component" != / ]; do
   path_component=$parent
 done
 
-destination_root_identity=$(stat -Lc '%d:%i:%u:%g:%a' -- "$canonical_root") || \
+destination_root_identity=$(stat -Lc '%d:%i:%u:%g' -- "$canonical_root") || \
   fail destination-root-stat-failed
 
 destination_root_identity_matches() {
@@ -140,13 +146,21 @@ destination_root_identity_matches() {
   [ ! -L "$destination_root" ] || return 1
   observed_root=$(realpath -e -- "$destination_root" 2>/dev/null) || return 1
   [ "$observed_root" = "$canonical_root" ] || return 1
-  observed_identity=$(stat -Lc '%d:%i:%u:%g:%a' -- "$destination_root" 2>/dev/null) || \
+  if find "$destination_root" -maxdepth 0 -perm /022 -print -quit | grep -q .; then
+    return 1
+  fi
+  observed_identity=$(stat -Lc '%d:%i:%u:%g' -- "$destination_root" 2>/dev/null) || \
     return 1
   [ "$observed_identity" = "$destination_root_identity" ]
 }
 
 assert_destination_root_identity() {
-  destination_root_identity_matches || fail destination-root-identity-changed
+  if ! destination_root_identity_matches; then
+    observed_identity=$(stat -Lc '%d:%i:%u:%g' -- "$destination_root" 2>/dev/null || printf unavailable)
+    printf 'ECR_SYNC_LOCKED_HOST_BUILDX_ROOT expected=%s observed=%s\n' \
+      "$destination_root_identity" "$observed_identity" >&2
+    fail destination-root-identity-changed
+  fi
 }
 
 go_archive="${canonical_root}/.go-toolchain.tar.gz"
@@ -159,6 +173,8 @@ source_one="${canonical_root}/.buildx-source-1"
 source_two="${canonical_root}/.buildx-source-2"
 cache_one="${canonical_root}/.go-build-cache-1"
 cache_two="${canonical_root}/.go-build-cache-2"
+module_cache_one="${canonical_root}/.go-module-cache-1"
+module_cache_two="${canonical_root}/.go-module-cache-2"
 deps_one="${canonical_root}/.buildx-deps-1.txt"
 deps_two="${canonical_root}/.buildx-deps-2.txt"
 binary_one="${canonical_root}/.docker-buildx-1"
@@ -175,6 +191,7 @@ completed=0
 for output_path in \
     "$go_archive" "$source_archive" "$patch_copy" "$go_root" "$home_root" \
     "$go_config_root" "$source_one" "$source_two" "$cache_one" "$cache_two" \
+    "$module_cache_one" "$module_cache_two" \
     "$deps_one" "$deps_two" "$binary_one" "$binary_two" "$module_raw_one" \
     "$module_raw_two" "$module_canonical_two" "$module_manifest" "$build_manifest" \
     "$bin_dir" "$target"; do
@@ -197,6 +214,7 @@ remove_exact_directory() {
   [ -d "$path" ] && [ ! -L "$path" ] && [ -O "$path" ] || return 1
   observed_root=$(realpath -e -- "$path") || return 1
   [ "$observed_root" = "$path" ] || return 1
+  chmod -R u+w -- "$path" || return 1
   rm -rf -- "$path"
   [ ! -e "$path" ] && [ ! -L "$path" ]
 }
@@ -212,7 +230,7 @@ cleanup_working_files() {
   done
   for directory_path in \
       "$go_root" "$home_root" "$go_config_root" "$source_one" "$source_two" \
-      "$cache_one" "$cache_two"; do
+      "$cache_one" "$cache_two" "$module_cache_one" "$module_cache_two"; do
     remove_exact_directory "$directory_path" || cleanup_status=1
   done
   return "$cleanup_status"
@@ -268,7 +286,7 @@ actual_patch_sha=${actual_patch_sha%% *}
 
 for directory_path in \
     "$go_root" "$home_root" "$go_config_root" "$source_one" "$source_two" \
-    "$cache_one" "$cache_two"; do
+    "$cache_one" "$cache_two" "$module_cache_one" "$module_cache_two"; do
   mkdir -m 0700 -- "$directory_path"
 done
 
@@ -286,7 +304,6 @@ export HOME="$home_root"
 export XDG_CONFIG_HOME="$go_config_root"
 export GOTOOLCHAIN=local
 export GO111MODULE=on
-export GOPROXY=off
 export GOSUMDB=sum.golang.org
 "$go_bin" telemetry off >/dev/null || fail go-telemetry-disable-failed
 expected_compiler="go${HOST_BUILDX_GO_VERSION}"
@@ -296,8 +313,9 @@ expected_compiler="go${HOST_BUILDX_GO_VERSION}"
 prepare_and_build() {
   local source_root=$1
   local cache_root=$2
-  local deps_output=$3
-  local binary_output=$4
+  local module_cache_root=$3
+  local deps_output=$4
+  local binary_output=$5
 
   tar --extract --gzip --file="$source_archive" --directory="$source_root" \
     --strip-components=1 --no-same-owner --no-same-permissions || fail source-extract-failed
@@ -308,6 +326,8 @@ prepare_and_build() {
     fail baseline-go-archive-version-mismatch
   [ "$(grep -Fxc $'\tgolang.org/x/mod v0.38.0' "$source_root/go.mod")" -eq 1 ] || \
     fail baseline-x-mod-version-mismatch
+  [ "$(grep -Fxc $'\tgoogle.golang.org/grpc '"$HOST_BUILDX_UPSTREAM_GRPC_VERSION" "$source_root/go.mod")" -eq 1 ] || \
+    fail baseline-grpc-version-mismatch
   (
     cd "$source_root"
     git apply --check "$patch_copy"
@@ -355,9 +375,21 @@ prepare_and_build() {
   fi
   (
     cd "$source_root"
-    GOCACHE="$cache_root" "$go_bin" list -mod=vendor -buildvcs=false -deps \
+    GOMODCACHE="$module_cache_root" GOPROXY=https://proxy.golang.org \
+      "$go_bin" get "google.golang.org/grpc@${HOST_BUILDX_GRPC_VERSION}"
+    GOMODCACHE="$module_cache_root" GOPROXY=https://proxy.golang.org \
+      "$go_bin" mod download
+    GOMODCACHE="$module_cache_root" GOPROXY=off "$go_bin" mod verify >&2
+    [ "$(GOMODCACHE="$module_cache_root" GOPROXY=off \
+      "$go_bin" list -mod=mod -m -f '{{.Version}}' google.golang.org/grpc)" = \
+      "$HOST_BUILDX_GRPC_VERSION" ]
+  ) || fail grpc-module-upgrade-failed
+  (
+    cd "$source_root"
+    GOCACHE="$cache_root" GOMODCACHE="$module_cache_root" GOPROXY=off \
+      "$go_bin" list -mod=mod -buildvcs=false -deps \
       ./cmd/buildx | LC_ALL=C sort -u > "$deps_output"
-  ) || fail offline-dependency-list-failed
+  ) || fail dependency-list-failed
   if grep -q '^github.com/docker/docker/' "$deps_output"; then
     fail legacy-docker-package-reachable
   fi
@@ -365,21 +397,26 @@ prepare_and_build() {
     cd "$source_root"
     SOURCE_DATE_EPOCH="$HOST_BUILDX_SOURCE_DATE_EPOCH" \
       CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GOCACHE="$cache_root" \
-      "$go_bin" build -mod=vendor -trimpath -buildvcs=false \
+      GOMODCACHE="$module_cache_root" GOPROXY=off \
+      "$go_bin" build -mod=mod -trimpath -buildvcs=false \
         -ldflags "-s -w -buildid= -X github.com/docker/buildx/version.Version=${HOST_BUILDX_VERSION} -X github.com/docker/buildx/version.Revision=${HOST_BUILDX_COMMIT} -X github.com/docker/buildx/version.Package=github.com/docker/buildx" \
         -o "$binary_output" ./cmd/buildx
-  ) || fail offline-build-failed
+  ) || fail build-failed
   chmod 0500 "$binary_output"
 }
 
-prepare_and_build "$source_one" "$cache_one" "$deps_one" "$binary_one"
-prepare_and_build "$source_two" "$cache_two" "$deps_two" "$binary_two"
+prepare_and_build "$source_one" "$cache_one" "$module_cache_one" "$deps_one" "$binary_one"
+prepare_and_build "$source_two" "$cache_two" "$module_cache_two" "$deps_two" "$binary_two"
 cmp -s "$deps_one" "$deps_two" || fail dependency-lists-not-reproducible
 cmp -s "$binary_one" "$binary_two" || fail binaries-not-reproducible
 
 actual_binary_sha=$(sha256sum -- "$binary_one")
 actual_binary_sha=${actual_binary_sha%% *}
-[ "$actual_binary_sha" = "$HOST_BUILDX_BINARY_SHA256" ] || fail binary-sha256-mismatch
+[ "$actual_binary_sha" = "$HOST_BUILDX_BINARY_SHA256" ] || {
+  printf 'ECR_SYNC_LOCKED_HOST_BUILDX_HASH expected=%s actual=%s\n' \
+    "$HOST_BUILDX_BINARY_SHA256" "$actual_binary_sha" >&2
+  fail binary-sha256-mismatch
+}
 [ "$(sha256sum -- "$binary_two" | awk '{print $1}')" = "$actual_binary_sha" ] || \
   fail second-binary-sha256-mismatch
 version_output=$("$binary_one" version) || fail version-readback-failed
@@ -395,9 +432,11 @@ read -r buildx_module buildx_version buildx_commit buildx_extra <<<"$version_out
 "$go_bin" version -m "$binary_one" > "$module_raw_one" || fail module-readback-failed
 "$go_bin" version -m "$binary_two" > "$module_raw_two" || fail second-module-readback-failed
 bash "$module_checker" "$module_raw_one" "$expected_compiler" \
-  "$HOST_BUILDX_GO_ARCHIVE_VERSION" "$HOST_BUILDX_X_MOD_VERSION" >/dev/null
+  "$HOST_BUILDX_GO_ARCHIVE_VERSION" "$HOST_BUILDX_X_MOD_VERSION" \
+  "$HOST_BUILDX_GRPC_VERSION" >/dev/null
 bash "$module_checker" "$module_raw_two" "$expected_compiler" \
-  "$HOST_BUILDX_GO_ARCHIVE_VERSION" "$HOST_BUILDX_X_MOD_VERSION" >/dev/null
+  "$HOST_BUILDX_GO_ARCHIVE_VERSION" "$HOST_BUILDX_X_MOD_VERSION" \
+  "$HOST_BUILDX_GRPC_VERSION" >/dev/null
 awk -v compiler="$expected_compiler" '
   NR == 1 { print "host-docker-buildx: " compiler; next }
   { print }
@@ -408,7 +447,8 @@ awk -v compiler="$expected_compiler" '
 ' "$module_raw_two" > "$module_canonical_two"
 cmp -s "$module_manifest" "$module_canonical_two" || fail module-readbacks-not-reproducible
 bash "$module_checker" "$module_manifest" "$expected_compiler" \
-  "$HOST_BUILDX_GO_ARCHIVE_VERSION" "$HOST_BUILDX_X_MOD_VERSION" >/dev/null
+  "$HOST_BUILDX_GO_ARCHIVE_VERSION" "$HOST_BUILDX_X_MOD_VERSION" \
+  "$HOST_BUILDX_GRPC_VERSION" >/dev/null
 
 {
   printf 'record\tname\tversion\tsha256\n'
@@ -417,6 +457,7 @@ bash "$module_checker" "$module_manifest" "$expected_compiler" \
   printf 'compiler\tgo\t%s\t%s\n' "$HOST_BUILDX_GO_VERSION" "$actual_go_sha"
   printf 'module\tgithub.com/moby/go-archive\t%s\t-\n' "$HOST_BUILDX_GO_ARCHIVE_VERSION"
   printf 'module\tgolang.org/x/mod\t%s\t-\n' "$HOST_BUILDX_X_MOD_VERSION"
+  printf 'module\tgoogle.golang.org/grpc\t%s\t-\n' "$HOST_BUILDX_GRPC_VERSION"
   printf 'binary\tbuildx-first\t%s\t%s\n' "$HOST_BUILDX_VERSION" "$actual_binary_sha"
   printf 'binary\tbuildx-second\t%s\t%s\n' "$HOST_BUILDX_VERSION" "$actual_binary_sha"
 } > "$build_manifest"
