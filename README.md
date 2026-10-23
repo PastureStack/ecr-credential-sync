@@ -110,7 +110,7 @@ vendor/security patch
 Go 1.27.3 archive
 (`sha256:65efbc80fdc1fa2cd2631cad5b481777a68e8725f34e89f50fc6ac714e379b40`),
 and resulting Linux amd64 binary
-(`sha256:577838443a630efa351e2a54a1c3a54919ae77bebbf44659af702606c178044d`).
+(`sha256:c3eefe87726f621583ec40d60851ad6c742fed94e2984cb230b6bc6fd36eb198`).
 As of 2026-09-09, upstream `v0.36.1` remains the latest signed Buildx release,
 but its official binary still records `go-archive v0.2.1`, `x/mod v0.38.0`, and
 `grpc v1.82.1`; upstream has no signed release containing all fixed module
@@ -230,3 +230,11 @@ own copyright, license, and notice files; redistribution must preserve them.
 ## October 2026 security maintenance
 
 Maintained Go builds select the patched Go 1.27.3 compiler without raising the existing Go language requirement. Ubuntu build/runtime stages apply the checksum-pinned `ca-certificates 20260816ubuntu0.26.04.1` security package after their frozen APT baseline; the final trust store and installed version are verified. Release artifacts must pass the repository's existing checks before publication.
+
+The Dapper environment additionally applies `toolchain/ubuntu-security-packages.lock`
+from the signed October 23 Ubuntu snapshot, using isolated APT indexes and only
+upgrading packages already installed. This includes the fixed curl libraries and
+OpenSSL without changing the base snapshot or adding runtime dependencies. Both
+host and Dapper Buildx retain version 0.36.1 and rebuild its containerd dependency
+at 2.3.4 for CVE-2026-95837; the exact reproducible host binary remains SHA-256
+locked. The final service image remains `scratch`.
