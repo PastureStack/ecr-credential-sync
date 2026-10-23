@@ -4,8 +4,8 @@ FROM ${UBUNTU_IMAGE} AS snapshot-ca-bootstrap
 
 ARG SOURCE_DATE_EPOCH
 
-ADD --checksum=sha256:6077d27c6b6f8b23590cb01ff877ed8c804a67a5442cc32b5a33da10d2bd0e90 \
-    https://snapshot.ubuntu.com/ubuntu/20260909T000000Z/pool/main/c/ca-certificates/ca-certificates_20260601~26.04.1_all.deb \
+ADD --checksum=sha256:5b6326f1932cfd7be57130561dc78192f09ed9f58bfbe6606ed0c50510c3b6cd \
+    https://archive.ubuntu.com/ubuntu/pool/main/c/ca-certificates/ca-certificates_20260816ubuntu0.26.04.1_all.deb \
     /tmp/ca-certificates.deb
 
 RUN set -eux; \

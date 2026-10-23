@@ -38,7 +38,7 @@ the test suite never waits on production delays.
 
 ## Build boundary
 
-- The build image uses the digest-pinned Ubuntu 26.04 base. It uses Go 1.27.0,
+- The build image uses the digest-pinned Ubuntu 26.04 base. It uses Go 1.27.3,
   Docker CLI 29.7.2, and the checksum-patched Buildx 0.36.1 source. Its identity
   resolver uses `jq` `1.8.1-4ubuntu2`, installed from the same dated Ubuntu
   snapshot and verified against the direct package lock. The Linux runtime is
@@ -56,14 +56,14 @@ the test suite never waits on production delays.
 - Development packaging may use `scripts/install-locked-host-buildx` only when
   the host plugin does not match the lock. The helper downloads the exact
   Buildx source (`sha256:fb28b5c2a198d05482f0656dfb7ee161240a904e36697bf7108e5d517f23854b`)
-  and Go 1.27.0 archive
-  (`sha256:675c26c449cbb18fc24b74650de1eabbae6e16f64326fd85a283fb3b58280685`),
+  and Go 1.27.3 archive
+  (`sha256:65efbc80fdc1fa2cd2631cad5b481777a68e8725f34e89f50fc6ac714e379b40`),
   applies the repository patch
   (`sha256:a29fdda204d592d0d46ed32b5fdc4336a7b3a7276301836d0a75b9386ca780f7`),
   downloads the checksum-verified target modules once, and performs two
   `GOPROXY=off` source builds from separate module caches. It requires identical
   dependency lists and binaries, verifies result
-  `sha256:05d6007425f3ec0c9bcf10aad49034e4342c34bd63ecd1cb0ac89ddfdf934c79`,
+  `sha256:f310f44b12ea74044f8083c840e3da4646efe0eebea4d82d829d15dff5b2aadb`,
   Buildx `v0.36.1`, commit `1d8dde89b8aba914e05e45366770736fea1fd690`,
   `github.com/moby/go-archive v0.3.0`, `golang.org/x/mod v0.40.0`, and
   `google.golang.org/grpc v1.83.2`. It writes
@@ -116,7 +116,8 @@ the test suite never waits on production delays.
   disposable builder may assess only unfixed `linux-libc-dev` findings because
   the package supplies headers rather than the vulnerable kernel implementation
   and is absent from the runtime image. That exact-package assessment expires
-  on 2026-09-15; every other builder finding fails the gate.
+  on 2026-11-06 after the 2026-10-23 exact header-only package review; every
+  fixed finding and every unregistered non-header builder finding fails the gate.
 - Do not add broad vulnerability, secret, or misconfiguration ignores.
 
 ## Reporting

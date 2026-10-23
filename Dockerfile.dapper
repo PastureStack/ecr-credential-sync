@@ -4,8 +4,8 @@ FROM ${UBUNTU_IMAGE} AS snapshot-ca-bootstrap
 
 ARG SOURCE_DATE_EPOCH
 
-ADD --checksum=sha256:6077d27c6b6f8b23590cb01ff877ed8c804a67a5442cc32b5a33da10d2bd0e90 \
-    https://snapshot.ubuntu.com/ubuntu/20260909T000000Z/pool/main/c/ca-certificates/ca-certificates_20260601~26.04.1_all.deb \
+ADD --checksum=sha256:5b6326f1932cfd7be57130561dc78192f09ed9f58bfbe6606ed0c50510c3b6cd \
+    https://archive.ubuntu.com/ubuntu/pool/main/c/ca-certificates/ca-certificates_20260816ubuntu0.26.04.1_all.deb \
     /tmp/ca-certificates.deb
 
 RUN set -eux; \
@@ -31,6 +31,8 @@ COPY ubuntu-apt.lock /usr/share/pasturestack/manifests/ubuntu-apt.lock
 COPY --chmod=0555 scripts/check-buildx-module-versions /usr/local/libexec/pasturestack/check-buildx-module-versions
 COPY --chmod=0555 scripts/check-go-telemetry-state /usr/local/libexec/pasturestack/check-go-telemetry-state
 COPY toolchain/buildx-security.patch /usr/share/pasturestack/patches/buildx-security.patch
+COPY toolchain/ubuntu-security-packages.lock /usr/share/pasturestack/manifests/ubuntu-security-packages.lock
+COPY scripts/install-ubuntu-security-updates /usr/local/libexec/pasturestack/install-ubuntu-security-updates
 
 RUN set -eux; \
     case "${SOURCE_DATE_EPOCH}" in ''|*[!0-9]*) exit 64 ;; esac; \
@@ -43,13 +45,13 @@ RUN set -eux; \
         /usr/share/pasturestack/patches/buildx-security.patch
 
 ARG DAPPER_HOST_ARCH=amd64
-ARG GO_VERSION=1.27.0
+ARG GO_VERSION=1.27.3
 ARG DOCKER_VERSION=29.7.2
 ARG DOCKER_GIT_COMMIT=a7dcaa6fdb6ed04aacbfdc76357fdae01605609e
 ARG DOCKER_SOURCE_DATE_EPOCH=1785922455
 ARG DOCKER_SOURCE_SHA256=6e5c91d3a5a79db78cf989d07727d00e757aa0da4d135a3ce4b86061b83fb511
 ARG DOCKER_UPSTREAM_X_TEXT_VERSION=v0.40.0
-ARG DOCKER_X_TEXT_VERSION=v0.41.0
+ARG DOCKER_X_TEXT_VERSION=v0.42.0
 ARG DOCKER_UPSTREAM_GRPC_VERSION=v1.82.1
 ARG DOCKER_GRPC_VERSION=v1.83.2
 ARG BUILDX_VERSION=0.36.1
@@ -58,16 +60,18 @@ ARG BUILDX_SOURCE_DATE_EPOCH=1785856317
 ARG BUILDX_SOURCE_SHA256=fb28b5c2a198d05482f0656dfb7ee161240a904e36697bf7108e5d517f23854b
 ARG BUILDX_SECURITY_PATCH_SHA256=a29fdda204d592d0d46ed32b5fdc4336a7b3a7276301836d0a75b9386ca780f7
 ARG BUILDX_GO_ARCHIVE_VERSION=v0.3.0
-ARG BUILDX_X_MOD_VERSION=v0.40.0
+ARG BUILDX_BASELINE_X_MOD_VERSION=v0.40.0
+ARG BUILDX_X_MOD_VERSION=v0.41.0
 ARG BUILDX_UPSTREAM_GRPC_VERSION=v1.82.1
 ARG BUILDX_GRPC_VERSION=v1.83.2
 ARG UBUNTU_APT_SNAPSHOT=20260909T000000Z
-ARG GO_LINUX_AMD64_SHA256=675c26c449cbb18fc24b74650de1eabbae6e16f64326fd85a283fb3b58280685
-ARG GO_LINUX_ARM64_SHA256=51798d2c42d0e1c6ed7fd9f48728b4193abac9e8aad6dbac2fe96a81f5909bda
+ARG GO_LINUX_AMD64_SHA256=65efbc80fdc1fa2cd2631cad5b481777a68e8725f34e89f50fc6ac714e379b40
+ARG GO_LINUX_ARM64_SHA256=a06e99309dbcbdca1a8ccd2282c3ee146e55930886e26b4f1193269587165f49
 
 ENV HOST_ARCH=${DAPPER_HOST_ARCH} ARCH=${DAPPER_HOST_ARCH}
 ENV DEBIAN_FRONTEND=noninteractive
 
+ADD --checksum=sha256:5b6326f1932cfd7be57130561dc78192f09ed9f58bfbe6606ed0c50510c3b6cd https://archive.ubuntu.com/ubuntu/pool/main/c/ca-certificates/ca-certificates_20260816ubuntu0.26.04.1_all.deb /opt/pasturestack-ca-certificates.deb
 RUN set -eux; \
     . /usr/share/pasturestack/manifests/ubuntu-apt.lock; \
     test "${UBUNTU_APT_SNAPSHOT}" = "${UBUNTU_APT_LOCKED_SNAPSHOT}"; \
@@ -79,7 +83,7 @@ RUN set -eux; \
     apt-get update; \
     apt-get install -y --no-install-recommends \
         bash="${UBUNTU_APT_BASH_VERSION}" \
-        ca-certificates="${UBUNTU_APT_CA_CERTIFICATES_VERSION}" \
+        ca-certificates="${UBUNTU_APT_CA_CERTIFICATES_BOOTSTRAP_VERSION}" \
         curl="${UBUNTU_APT_CURL_VERSION}" \
         gcc="${UBUNTU_APT_GCC_VERSION}" \
         git="${UBUNTU_APT_GIT_VERSION}" \
@@ -89,6 +93,11 @@ RUN set -eux; \
         make="${UBUNTU_APT_MAKE_VERSION}" \
         tar="${UBUNTU_APT_TAR_VERSION}" \
         xz-utils="${UBUNTU_APT_XZ_UTILS_VERSION}"; \
+    dpkg -i /opt/pasturestack-ca-certificates.deb && \
+    update-ca-certificates --fresh && \
+    test "$(dpkg-query -W -f='${Version}' ca-certificates)" = '20260816ubuntu0.26.04.1' && \
+    test ! -e /usr/share/ca-certificates/mozilla/emSign_ECC_Root_CA_-_G3.crt && \
+    rm -f /opt/pasturestack-ca-certificates.deb && \
     for package_and_version in \
         "bash=${UBUNTU_APT_BASH_VERSION}" \
         "ca-certificates=${UBUNTU_APT_CA_CERTIFICATES_VERSION}" \
@@ -106,6 +115,8 @@ RUN set -eux; \
         test "$(dpkg-query -W -f='${Version}' "${package}")" = "${expected}"; \
     done; \
     test "$(jq --version)" = "jq-1.8.1"; \
+    sh /usr/local/libexec/pasturestack/install-ubuntu-security-updates \
+        /usr/share/pasturestack/manifests/ubuntu-security-packages.lock /etc/ssl/certs/ca-certificates.crt; \
     { \
         printf 'record\tname\tarchitecture\tversion\n'; \
         printf 'metadata\tschema\t-\tpasturestack.dpkg-manifest/v1\n'; \
@@ -170,8 +181,15 @@ RUN set -eux; \
     cp vendor.mod go.mod; \
     cp vendor.sum go.sum; \
     GO111MODULE=on GOPROXY=https://proxy.golang.org GOSUMDB=sum.golang.org GOMODCACHE=/tmp/docker-go-mod \
-        go get "golang.org/x/text@${DOCKER_X_TEXT_VERSION}" "google.golang.org/grpc@${DOCKER_GRPC_VERSION}"; \
+        go get "golang.org/x/text@${DOCKER_X_TEXT_VERSION}" "google.golang.org/grpc@${DOCKER_GRPC_VERSION}" "golang.org/x/net@v0.60.0" \
+          go.opentelemetry.io/otel/sdk@v1.45.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace@v1.45.0 \
+          go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc@v1.45.0; \
     GO111MODULE=on GOPROXY=https://proxy.golang.org GOSUMDB=sum.golang.org GOMODCACHE=/tmp/docker-go-mod go mod download; \
+    GO111MODULE=on GOPROXY=https://proxy.golang.org GOSUMDB=sum.golang.org GOMODCACHE=/tmp/docker-go-mod GOOS=linux GOARCH="${DAPPER_HOST_ARCH}" \
+        go list -mod=mod -buildvcs=false -tags 'grpcnotrace osusergo netgo' -deps ./cmd/docker > /usr/share/pasturestack/manifests/docker-package-graph.txt; \
+    test -s /usr/share/pasturestack/manifests/docker-package-graph.txt; \
+    if grep -Eq '^golang.org/x/crypto/openpgp(/|$)' /usr/share/pasturestack/manifests/docker-package-graph.txt; then exit 1; fi; \
+    touch --date="@${SOURCE_DATE_EPOCH}" /usr/share/pasturestack/manifests/docker-package-graph.txt; \
     GO111MODULE=on GOPROXY=off GOSUMDB=sum.golang.org GOMODCACHE=/tmp/docker-go-mod go mod verify; \
     docker_build_time="$(date -u --date="@${DOCKER_SOURCE_DATE_EPOCH}" +'%Y-%m-%dT%H:%M:%SZ')"; \
     SOURCE_DATE_EPOCH="${DOCKER_SOURCE_DATE_EPOCH}" CGO_ENABLED=0 GO111MODULE=on GOPROXY=off GOSUMDB=sum.golang.org GOMODCACHE=/tmp/docker-go-mod GOOS=linux GOARCH="${DAPPER_HOST_ARCH}" \
@@ -230,18 +248,25 @@ RUN set -eux; \
         fi; \
     done < /tmp/buildx-patched-go-files.txt; \
     test "$(grep -Fxc "$(printf '\tgithub.com/moby/go-archive %s' "${BUILDX_GO_ARCHIVE_VERSION}")" go.mod)" -eq 1; \
-    test "$(grep -Fxc "$(printf '\tgolang.org/x/mod %s' "${BUILDX_X_MOD_VERSION}")" go.mod)" -eq 1; \
+    test "$(grep -Fxc "$(printf '\tgolang.org/x/mod %s' "${BUILDX_BASELINE_X_MOD_VERSION}")" go.mod)" -eq 1; \
     test "$(grep -Fxc "$(printf '\tgoogle.golang.org/grpc %s' "${BUILDX_UPSTREAM_GRPC_VERSION}")" go.mod)" -eq 1; \
     grep -Fqx "# github.com/moby/go-archive ${BUILDX_GO_ARCHIVE_VERSION}" vendor/modules.txt; \
-    grep -Fqx "# golang.org/x/mod ${BUILDX_X_MOD_VERSION}" vendor/modules.txt; \
+    grep -Fqx "# golang.org/x/mod ${BUILDX_BASELINE_X_MOD_VERSION}" vendor/modules.txt; \
     if grep -F 'github.com/moby/go-archive v0.2.1' go.mod vendor/modules.txt; then exit 1; fi; \
     if grep -F 'golang.org/x/mod v0.38.0' go.mod vendor/modules.txt; then exit 1; fi; \
     GO111MODULE=on GOTOOLCHAIN=local GOWORK=off GOPROXY=https://proxy.golang.org GOSUMDB=sum.golang.org GOMODCACHE=/tmp/buildx-go-mod \
-        go get "google.golang.org/grpc@${BUILDX_GRPC_VERSION}"; \
+        go get "google.golang.org/grpc@${BUILDX_GRPC_VERSION}" "golang.org/x/net@v0.60.0" "github.com/containerd/containerd/v2@v2.3.7" \
+          go.opentelemetry.io/otel/sdk@v1.45.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace@v1.45.0 \
+          go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc@v1.45.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp@v1.45.0; \
     GO111MODULE=on GOTOOLCHAIN=local GOWORK=off GOPROXY=https://proxy.golang.org GOSUMDB=sum.golang.org GOMODCACHE=/tmp/buildx-go-mod go mod download; \
+    GO111MODULE=on GOTOOLCHAIN=local GOWORK=off GOPROXY=https://proxy.golang.org GOSUMDB=sum.golang.org GOMODCACHE=/tmp/buildx-go-mod GOOS=linux GOARCH="${DAPPER_HOST_ARCH}" \
+        go list -mod=mod -buildvcs=false -deps ./cmd/buildx >/dev/null; \
     GO111MODULE=on GOTOOLCHAIN=local GOWORK=off GOPROXY=off GOSUMDB=sum.golang.org GOMODCACHE=/tmp/buildx-go-mod go mod verify; \
     test "$(GO111MODULE=on GOTOOLCHAIN=local GOWORK=off GOPROXY=off GOSUMDB=sum.golang.org GOMODCACHE=/tmp/buildx-go-mod go list -mod=mod -m -f '{{.Version}}' google.golang.org/grpc)" = "${BUILDX_GRPC_VERSION}"; \
     GO111MODULE=on GOTOOLCHAIN=local GOWORK=off GOPROXY=off GOSUMDB=sum.golang.org GOMODCACHE=/tmp/buildx-go-mod go list -mod=mod -buildvcs=false -deps ./cmd/buildx > /tmp/buildx-deps.txt; \
+    cp /tmp/buildx-deps.txt /usr/share/pasturestack/manifests/buildx-package-graph.txt; \
+    if grep -Eq '^golang.org/x/crypto/openpgp(/|$)' /tmp/buildx-deps.txt; then exit 1; fi; \
+    touch --date="@${SOURCE_DATE_EPOCH}" /usr/share/pasturestack/manifests/buildx-package-graph.txt; \
     if grep '^github.com/docker/docker/' /tmp/buildx-deps.txt; then \
         echo 'patched Buildx still compiles github.com/docker/docker' >&2; \
         exit 1; \
@@ -264,6 +289,10 @@ RUN set -eux; \
     bash /usr/local/libexec/pasturestack/check-go-telemetry-state /tmp/go-config/go/telemetry "${SOURCE_DATE_EPOCH}" /usr/local/go/bin/go
 
 FROM dapper-base AS dapper-final
+
+COPY --from=buildx-builder --chown=0:0 --chmod=0444 \
+    /usr/share/pasturestack/manifests/buildx-package-graph.txt \
+    /usr/share/pasturestack/manifests/buildx-package-graph.txt
 
 COPY --from=buildx-builder --chown=0:0 --chmod=0555 \
     /usr/libexec/docker/cli-plugins/docker-buildx \

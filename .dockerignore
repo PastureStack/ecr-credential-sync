@@ -4,5 +4,7 @@
 !scripts
 !scripts/check-buildx-module-versions
 !scripts/check-go-telemetry-state
+!scripts/install-ubuntu-security-updates
 !toolchain
 !toolchain/buildx-security.patch
+!toolchain/ubuntu-security-packages.lock

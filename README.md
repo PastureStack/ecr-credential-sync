@@ -69,7 +69,7 @@ docker run --rm \
   -e PLATFORM_URL \
   -e PLATFORM_ACCESS_KEY \
   -e PLATFORM_SECRET_KEY \
-ghcr.io/pasturestack/ecr-credential-sync:v3.1.5
+ghcr.io/pasturestack/ecr-credential-sync:v3.1.6
 ```
 
 Windows Server 2022 hosts use
@@ -78,7 +78,7 @@ identifies the platform, while the tag remains pure numeric. This coordinate
 is an exact manifest alias of the already reviewed Windows build
 (`sha256:937b0f642694c6e6638486ec98aa786b82083a12848fd7c0764c1a4ebf718ee5`),
 so the naming correction does not change image bytes. Linux deployments
-continue to use `v3.1.5`.
+continue to use `v3.1.6`.
 
 Do not publish a mutable `latest` tag. Deployment examples and Catalog
 templates use immutable semantic version tags; release digests are retained
@@ -86,9 +86,9 @@ only in internal validation evidence.
 
 ## Local build and test
 
-The project uses a containerized Go 1.27.0 module build with `go.mod`, `go.sum`,
+The project uses a containerized Go 1.27.3 module build with `go.mod`, `go.sum`,
 and an offline `vendor/` tree. The build image compiles Docker CLI 29.7.2 from its checksum- and
-commit-locked official source with Go 1.27.0, and records both the binary hash
+commit-locked official source with Go 1.27.3, and records both the binary hash
 and embedded Go build information. It also locks Buildx 0.36.1 and installs
 `jq` `1.8.1-4ubuntu2` as the fail-closed Dapper identity metadata parser. A
 checksum-locked Buildx patch removes its sole compiled dependency on the legacy
@@ -107,10 +107,10 @@ the source SBOM. The lock binds the exact Buildx source archive
 (`sha256:fb28b5c2a198d05482f0656dfb7ee161240a904e36697bf7108e5d517f23854b`),
 vendor/security patch
 (`sha256:a29fdda204d592d0d46ed32b5fdc4336a7b3a7276301836d0a75b9386ca780f7`),
-Go 1.27.0 archive
-(`sha256:675c26c449cbb18fc24b74650de1eabbae6e16f64326fd85a283fb3b58280685`),
+Go 1.27.3 archive
+(`sha256:65efbc80fdc1fa2cd2631cad5b481777a68e8725f34e89f50fc6ac714e379b40`),
 and resulting Linux amd64 binary
-(`sha256:05d6007425f3ec0c9bcf10aad49034e4342c34bd63ecd1cb0ac89ddfdf934c79`).
+(`sha256:f310f44b12ea74044f8083c840e3da4646efe0eebea4d82d829d15dff5b2aadb`).
 As of 2026-09-09, upstream `v0.36.1` remains the latest signed Buildx release,
 but its official binary still records `go-archive v0.2.1`, `x/mod v0.38.0`, and
 `grpc v1.82.1`; upstream has no signed release containing all fixed module
@@ -171,8 +171,8 @@ The development packaging harness must use this exact command for builder
 create, inspect, and removal, and pass it to `make` with the pinned builder.
 
 ```bash
-VERSION_OVERRIDE=v3.1.5 ARCH=amd64 make build
-VERSION_OVERRIDE=v3.1.5 ARCH=amd64 make test
+VERSION_OVERRIDE=v3.1.6 ARCH=amd64 make build
+VERSION_OVERRIDE=v3.1.6 ARCH=amd64 make test
 ```
 
 These commands are local build and test targets. CI/CD publication and release
@@ -226,3 +226,18 @@ or private URLs.
 The project remains licensed under the existing [Apache License 2.0](LICENSE).
 The license was not replaced by PastureStack. Vendored dependencies retain their
 own copyright, license, and notice files; redistribution must preserve them.
+
+## October 2026 security maintenance
+
+Maintained Go builds select the patched Go 1.27.3 compiler without raising the existing Go language requirement. Ubuntu build/runtime stages apply the checksum-pinned `ca-certificates 20260816ubuntu0.26.04.1` security package after their frozen APT baseline; the final trust store and installed version are verified. Release artifacts must pass the repository's existing checks before publication.
+
+The Dapper environment additionally applies `toolchain/ubuntu-security-packages.lock`
+from the signed October 23 Ubuntu snapshot, using isolated APT indexes and only
+upgrading packages already installed. This includes the fixed curl libraries and
+OpenSSL without changing the base snapshot or adding runtime dependencies. Both
+host and Dapper Buildx retain version 0.36.1 and rebuild its containerd dependency
+at 2.3.7 for official same-series security fixes, with OpenTelemetry v1.45.0; the exact reproducible host binary remains SHA-256
+locked. The final service image remains `scratch`.
+### Complete build-environment gate
+
+The Dapper scan retains all severities and requires nonempty package analysis for the expected Go binaries. Any available fixed version fails, including Low, Medium and Unknown findings. Other Low/Medium findings require an exact package/version/PURL entry backed by the official vendor tracker. The pinned userspace kernel-header exception additionally requires the reviewed CVE set, actual header payload paths, and absence of kernel images/modules; it never permits an available fix. Unknown module findings require the separately verified exact source package graph, not a generic severity exemption.
