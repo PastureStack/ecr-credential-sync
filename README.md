@@ -238,3 +238,6 @@ OpenSSL without changing the base snapshot or adding runtime dependencies. Both
 host and Dapper Buildx retain version 0.36.1 and rebuild its containerd dependency
 at 2.3.7 for official same-series security fixes, with OpenTelemetry v1.45.0; the exact reproducible host binary remains SHA-256
 locked. The final service image remains `scratch`.
+### Complete build-environment gate
+
+The Dapper scan retains all severities and requires nonempty package analysis for the expected Go binaries. Any available fixed version fails, including Low, Medium and Unknown findings. Other Low/Medium findings require an exact package/version/PURL entry backed by the official vendor tracker. The pinned userspace kernel-header exception additionally requires the reviewed CVE set, actual header payload paths, and absence of kernel images/modules; it never permits an available fix. Unknown module findings require the separately verified exact source package graph, not a generic severity exemption.

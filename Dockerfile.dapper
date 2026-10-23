@@ -186,7 +186,10 @@ RUN set -eux; \
           go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc@v1.45.0; \
     GO111MODULE=on GOPROXY=https://proxy.golang.org GOSUMDB=sum.golang.org GOMODCACHE=/tmp/docker-go-mod go mod download; \
     GO111MODULE=on GOPROXY=https://proxy.golang.org GOSUMDB=sum.golang.org GOMODCACHE=/tmp/docker-go-mod GOOS=linux GOARCH="${DAPPER_HOST_ARCH}" \
-        go list -mod=mod -buildvcs=false -tags 'grpcnotrace osusergo netgo' -deps ./cmd/docker >/dev/null; \
+        go list -mod=mod -buildvcs=false -tags 'grpcnotrace osusergo netgo' -deps ./cmd/docker > /usr/share/pasturestack/manifests/docker-package-graph.txt; \
+    test -s /usr/share/pasturestack/manifests/docker-package-graph.txt; \
+    if grep -Eq '^golang.org/x/crypto/openpgp(/|$)' /usr/share/pasturestack/manifests/docker-package-graph.txt; then exit 1; fi; \
+    touch --date="@${SOURCE_DATE_EPOCH}" /usr/share/pasturestack/manifests/docker-package-graph.txt; \
     GO111MODULE=on GOPROXY=off GOSUMDB=sum.golang.org GOMODCACHE=/tmp/docker-go-mod go mod verify; \
     docker_build_time="$(date -u --date="@${DOCKER_SOURCE_DATE_EPOCH}" +'%Y-%m-%dT%H:%M:%SZ')"; \
     SOURCE_DATE_EPOCH="${DOCKER_SOURCE_DATE_EPOCH}" CGO_ENABLED=0 GO111MODULE=on GOPROXY=off GOSUMDB=sum.golang.org GOMODCACHE=/tmp/docker-go-mod GOOS=linux GOARCH="${DAPPER_HOST_ARCH}" \
@@ -261,6 +264,9 @@ RUN set -eux; \
     GO111MODULE=on GOTOOLCHAIN=local GOWORK=off GOPROXY=off GOSUMDB=sum.golang.org GOMODCACHE=/tmp/buildx-go-mod go mod verify; \
     test "$(GO111MODULE=on GOTOOLCHAIN=local GOWORK=off GOPROXY=off GOSUMDB=sum.golang.org GOMODCACHE=/tmp/buildx-go-mod go list -mod=mod -m -f '{{.Version}}' google.golang.org/grpc)" = "${BUILDX_GRPC_VERSION}"; \
     GO111MODULE=on GOTOOLCHAIN=local GOWORK=off GOPROXY=off GOSUMDB=sum.golang.org GOMODCACHE=/tmp/buildx-go-mod go list -mod=mod -buildvcs=false -deps ./cmd/buildx > /tmp/buildx-deps.txt; \
+    cp /tmp/buildx-deps.txt /usr/share/pasturestack/manifests/buildx-package-graph.txt; \
+    if grep -Eq '^golang.org/x/crypto/openpgp(/|$)' /tmp/buildx-deps.txt; then exit 1; fi; \
+    touch --date="@${SOURCE_DATE_EPOCH}" /usr/share/pasturestack/manifests/buildx-package-graph.txt; \
     if grep '^github.com/docker/docker/' /tmp/buildx-deps.txt; then \
         echo 'patched Buildx still compiles github.com/docker/docker' >&2; \
         exit 1; \
@@ -283,6 +289,10 @@ RUN set -eux; \
     bash /usr/local/libexec/pasturestack/check-go-telemetry-state /tmp/go-config/go/telemetry "${SOURCE_DATE_EPOCH}" /usr/local/go/bin/go
 
 FROM dapper-base AS dapper-final
+
+COPY --from=buildx-builder --chown=0:0 --chmod=0444 \
+    /usr/share/pasturestack/manifests/buildx-package-graph.txt \
+    /usr/share/pasturestack/manifests/buildx-package-graph.txt
 
 COPY --from=buildx-builder --chown=0:0 --chmod=0555 \
     /usr/libexec/docker/cli-plugins/docker-buildx \

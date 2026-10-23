@@ -116,7 +116,8 @@ the test suite never waits on production delays.
   disposable builder may assess only unfixed `linux-libc-dev` findings because
   the package supplies headers rather than the vulnerable kernel implementation
   and is absent from the runtime image. That exact-package assessment expires
-  on 2026-09-15; every other builder finding fails the gate.
+  on 2026-11-06 after the 2026-10-23 exact header-only package review; every
+  fixed finding and every unregistered non-header builder finding fails the gate.
 - Do not add broad vulnerability, secret, or misconfiguration ignores.
 
 ## Reporting

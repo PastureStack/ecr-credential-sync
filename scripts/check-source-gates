@@ -864,7 +864,7 @@ if [ "$workflow_trivy_sudo_find_count" -ne 2 ] || \
   failure_count=$((failure_count + 1))
 fi
 require_marker .github/workflows/supply-chain.yml "stat -c '%u:%g' bin/ecr-credential-sync" ECR_SYNC_OUTPUT_OWNERSHIP_GATE_MISSING
-require_marker .github/workflows/supply-chain.yml "vex_expires='2026-09-15T00:00:00Z'" ECR_SYNC_DAPPER_VEX_EXPIRY_MISSING
+require_marker .github/workflows/supply-chain.yml "vex_expires='2026-11-06T00:00:00Z'" ECR_SYNC_DAPPER_VEX_EXPIRY_MISSING
 require_marker .github/workflows/supply-chain.yml 'evidence/dapper.openvex.json' ECR_SYNC_DAPPER_VEX_EVIDENCE_MISSING
 require_marker package/Dockerfile 'org.opencontainers.image.base.name="scratch"' ECR_SYNC_RUNTIME_KERNEL_HEADER_BOUNDARY_MISSING
 require_marker scripts/entry 'trap restore_output_ownership EXIT' ECR_SYNC_OUTPUT_OWNERSHIP_TRAP_MISSING

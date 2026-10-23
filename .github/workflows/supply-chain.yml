@@ -680,7 +680,7 @@ jobs:
             --volume "$trivy_cache:/root/.cache/trivy" \
             "$TRIVY_IMAGE" image \
             --skip-db-update --offline-scan --scanners vuln,secret \
-            --format json --output /evidence/dapper-security.json \
+            --list-all-pkgs --format json --output /evidence/dapper-security.json \
             "$DAPPER_IMAGE"
           docker run --rm \
             --volume /var/run/docker.sock:/var/run/docker.sock \
@@ -885,6 +885,17 @@ jobs:
           test "$source_sbom_findings" -eq 0
 
           dapper_report=evidence/dapper-security.json
+          bash .github/scripts/check-builder-header-boundary.sh "$DAPPER_IMAGE" > evidence/dapper-header-boundary.json
+          docker run --rm --entrypoint cat "$DAPPER_IMAGE" /usr/share/pasturestack/manifests/buildx-package-graph.txt > evidence/buildx-package-graph.txt
+          docker run --rm --entrypoint cat "$DAPPER_IMAGE" /usr/share/pasturestack/manifests/docker-package-graph.txt > evidence/docker-package-graph.txt
+          container=$(docker create "$DAPPER_IMAGE")
+          docker cp "$container:/usr/bin/docker" evidence/docker-cli
+          docker rm "$container"
+          sha256sum evidence/docker-cli | awk '{print $1}' > evidence/docker-cli.sha256
+          chmod +x evidence/docker-cli
+          python3 .github/scripts/docker_manifest_digest_proof.py > evidence/docker-manifest-digest-proof.json
+          python3 .github/scripts/test_builder_vulnerability_policy.py
+          python3 .github/scripts/enforce-runtime-vulnerabilities.py --scope builder --repository PastureStack/ecr-credential-sync < "$dapper_report"
           dapper_secrets="$(jq '[.Results[]?.Secrets[]?] | length' "$dapper_report")"
           dapper_buildx_fixed_cve_regressions="$(jq '[
             .Results[]?
@@ -909,7 +920,7 @@ jobs:
             | select(.Severity == "CRITICAL" or .Severity == "HIGH")
             | select(.PkgName != "linux-libc-dev" or ((.FixedVersion // "") != ""))
           ] | length' "$dapper_report")"
-          vex_expires='2026-09-15T00:00:00Z'
+          vex_expires='2026-11-06T00:00:00Z'
           test "$(date -u +%s)" -lt "$(date -u -d "$vex_expires" +%s)"
           jq -r '.Results[]?.Vulnerabilities[]?
             | select(.Severity == "CRITICAL" or .Severity == "HIGH")
