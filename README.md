@@ -110,7 +110,7 @@ vendor/security patch
 Go 1.27.3 archive
 (`sha256:65efbc80fdc1fa2cd2631cad5b481777a68e8725f34e89f50fc6ac714e379b40`),
 and resulting Linux amd64 binary
-(`sha256:c3eefe87726f621583ec40d60851ad6c742fed94e2984cb230b6bc6fd36eb198`).
+(`sha256:f310f44b12ea74044f8083c840e3da4646efe0eebea4d82d829d15dff5b2aadb`).
 As of 2026-09-09, upstream `v0.36.1` remains the latest signed Buildx release,
 but its official binary still records `go-archive v0.2.1`, `x/mod v0.38.0`, and
 `grpc v1.82.1`; upstream has no signed release containing all fixed module
@@ -236,5 +236,5 @@ from the signed October 23 Ubuntu snapshot, using isolated APT indexes and only
 upgrading packages already installed. This includes the fixed curl libraries and
 OpenSSL without changing the base snapshot or adding runtime dependencies. Both
 host and Dapper Buildx retain version 0.36.1 and rebuild its containerd dependency
-at 2.3.4 for CVE-2026-95837; the exact reproducible host binary remains SHA-256
+at 2.3.7 for official same-series security fixes, with OpenTelemetry v1.45.0; the exact reproducible host binary remains SHA-256
 locked. The final service image remains `scratch`.

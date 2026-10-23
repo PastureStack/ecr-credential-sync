@@ -63,7 +63,7 @@ the test suite never waits on production delays.
   downloads the checksum-verified target modules once, and performs two
   `GOPROXY=off` source builds from separate module caches. It requires identical
   dependency lists and binaries, verifies result
-  `sha256:c3eefe87726f621583ec40d60851ad6c742fed94e2984cb230b6bc6fd36eb198`,
+  `sha256:f310f44b12ea74044f8083c840e3da4646efe0eebea4d82d829d15dff5b2aadb`,
   Buildx `v0.36.1`, commit `1d8dde89b8aba914e05e45366770736fea1fd690`,
   `github.com/moby/go-archive v0.3.0`, `golang.org/x/mod v0.40.0`, and
   `google.golang.org/grpc v1.83.2`. It writes

@@ -218,7 +218,7 @@ jobs:
           test "$HOST_BUILDX_X_MOD_VERSION" = v0.41.0
           test "$HOST_BUILDX_UPSTREAM_GRPC_VERSION" = v1.82.1
           test "$HOST_BUILDX_GRPC_VERSION" = v1.83.2
-          test "$HOST_BUILDX_BINARY_SHA256" = c3eefe87726f621583ec40d60851ad6c742fed94e2984cb230b6bc6fd36eb198
+          test "$HOST_BUILDX_BINARY_SHA256" = f310f44b12ea74044f8083c840e3da4646efe0eebea4d82d829d15dff5b2aadb
           test "$HOST_BUILDKIT_VERSION" = v0.32.2
           test "$HOST_BUILDKIT_IMAGE" = "$DAPPER_BUILDKIT_IMAGE"
           test "$HOST_BUILDX_INSTALL_METHOD" = repository-locked-source-builder
@@ -758,7 +758,7 @@ jobs:
             exact_property("pasturestack:host-buildx-x-mod-version"; "v0.41.0") and
             exact_property("pasturestack:host-buildx-upstream-grpc-version"; "v1.82.1") and
             exact_property("pasturestack:host-buildx-grpc-version"; "v1.83.2") and
-            exact_property("pasturestack:host-buildx-binary-sha256"; "c3eefe87726f621583ec40d60851ad6c742fed94e2984cb230b6bc6fd36eb198") and
+            exact_property("pasturestack:host-buildx-binary-sha256"; "f310f44b12ea74044f8083c840e3da4646efe0eebea4d82d829d15dff5b2aadb") and
             exact_property("pasturestack:host-buildx-install-method"; "repository-locked-source-builder")
           ' evidence/source.cdx.json >/dev/null
           docker run --rm \
