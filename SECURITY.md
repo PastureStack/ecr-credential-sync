@@ -38,7 +38,7 @@ the test suite never waits on production delays.
 
 ## Build boundary
 
-- The build image uses the digest-pinned Ubuntu 26.04 base. It uses Go 1.27.0,
+- The build image uses the digest-pinned Ubuntu 26.04 base. It uses Go 1.27.3,
   Docker CLI 29.7.2, and the checksum-patched Buildx 0.36.1 source. Its identity
   resolver uses `jq` `1.8.1-4ubuntu2`, installed from the same dated Ubuntu
   snapshot and verified against the direct package lock. The Linux runtime is
@@ -56,8 +56,8 @@ the test suite never waits on production delays.
 - Development packaging may use `scripts/install-locked-host-buildx` only when
   the host plugin does not match the lock. The helper downloads the exact
   Buildx source (`sha256:fb28b5c2a198d05482f0656dfb7ee161240a904e36697bf7108e5d517f23854b`)
-  and Go 1.27.0 archive
-  (`sha256:675c26c449cbb18fc24b74650de1eabbae6e16f64326fd85a283fb3b58280685`),
+  and Go 1.27.3 archive
+  (`sha256:65efbc80fdc1fa2cd2631cad5b481777a68e8725f34e89f50fc6ac714e379b40`),
   applies the repository patch
   (`sha256:a29fdda204d592d0d46ed32b5fdc4336a7b3a7276301836d0a75b9386ca780f7`),
   downloads the checksum-verified target modules once, and performs two
