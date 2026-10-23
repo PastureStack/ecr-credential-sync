@@ -49,7 +49,7 @@ ARG DOCKER_GIT_COMMIT=a7dcaa6fdb6ed04aacbfdc76357fdae01605609e
 ARG DOCKER_SOURCE_DATE_EPOCH=1785922455
 ARG DOCKER_SOURCE_SHA256=6e5c91d3a5a79db78cf989d07727d00e757aa0da4d135a3ce4b86061b83fb511
 ARG DOCKER_UPSTREAM_X_TEXT_VERSION=v0.40.0
-ARG DOCKER_X_TEXT_VERSION=v0.41.0
+ARG DOCKER_X_TEXT_VERSION=v0.42.0
 ARG DOCKER_UPSTREAM_GRPC_VERSION=v1.82.1
 ARG DOCKER_GRPC_VERSION=v1.83.2
 ARG BUILDX_VERSION=0.36.1
@@ -176,7 +176,7 @@ RUN set -eux; \
     cp vendor.mod go.mod; \
     cp vendor.sum go.sum; \
     GO111MODULE=on GOPROXY=https://proxy.golang.org GOSUMDB=sum.golang.org GOMODCACHE=/tmp/docker-go-mod \
-        go get "golang.org/x/text@${DOCKER_X_TEXT_VERSION}" "google.golang.org/grpc@${DOCKER_GRPC_VERSION}"; \
+        go get "golang.org/x/text@${DOCKER_X_TEXT_VERSION}" "google.golang.org/grpc@${DOCKER_GRPC_VERSION}" "golang.org/x/net@v0.60.0"; \
     GO111MODULE=on GOPROXY=https://proxy.golang.org GOSUMDB=sum.golang.org GOMODCACHE=/tmp/docker-go-mod go mod download; \
     GO111MODULE=on GOPROXY=off GOSUMDB=sum.golang.org GOMODCACHE=/tmp/docker-go-mod go mod verify; \
     docker_build_time="$(date -u --date="@${DOCKER_SOURCE_DATE_EPOCH}" +'%Y-%m-%dT%H:%M:%SZ')"; \
@@ -243,7 +243,7 @@ RUN set -eux; \
     if grep -F 'github.com/moby/go-archive v0.2.1' go.mod vendor/modules.txt; then exit 1; fi; \
     if grep -F 'golang.org/x/mod v0.38.0' go.mod vendor/modules.txt; then exit 1; fi; \
     GO111MODULE=on GOTOOLCHAIN=local GOWORK=off GOPROXY=https://proxy.golang.org GOSUMDB=sum.golang.org GOMODCACHE=/tmp/buildx-go-mod \
-        go get "google.golang.org/grpc@${BUILDX_GRPC_VERSION}"; \
+        go get "google.golang.org/grpc@${BUILDX_GRPC_VERSION}" "golang.org/x/net@v0.60.0"; \
     GO111MODULE=on GOTOOLCHAIN=local GOWORK=off GOPROXY=https://proxy.golang.org GOSUMDB=sum.golang.org GOMODCACHE=/tmp/buildx-go-mod go mod download; \
     GO111MODULE=on GOTOOLCHAIN=local GOWORK=off GOPROXY=off GOSUMDB=sum.golang.org GOMODCACHE=/tmp/buildx-go-mod go mod verify; \
     test "$(GO111MODULE=on GOTOOLCHAIN=local GOWORK=off GOPROXY=off GOSUMDB=sum.golang.org GOMODCACHE=/tmp/buildx-go-mod go list -mod=mod -m -f '{{.Version}}' google.golang.org/grpc)" = "${BUILDX_GRPC_VERSION}"; \
