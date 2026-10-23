@@ -377,7 +377,9 @@ prepare_and_build() {
   (
     cd "$source_root"
     GOMODCACHE="$module_cache_root" GOPROXY=https://proxy.golang.org \
-      "$go_bin" get "google.golang.org/grpc@${HOST_BUILDX_GRPC_VERSION}" "golang.org/x/net@v0.60.0" "github.com/containerd/containerd/v2@v2.3.4"
+      "$go_bin" get "google.golang.org/grpc@${HOST_BUILDX_GRPC_VERSION}" "golang.org/x/net@v0.60.0" "github.com/containerd/containerd/v2@v2.3.7" \
+        go.opentelemetry.io/otel/sdk@v1.45.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace@v1.45.0 \
+        go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc@v1.45.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp@v1.45.0
     GOMODCACHE="$module_cache_root" GOPROXY=https://proxy.golang.org \
       "$go_bin" mod download
     GOMODCACHE="$module_cache_root" GOPROXY=off "$go_bin" mod verify >&2

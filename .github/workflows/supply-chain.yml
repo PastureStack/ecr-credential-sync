@@ -785,7 +785,7 @@ jobs:
           jq -e '
             [.components[]?
               | select(.name == "stdlib")
-              | select((.version // "") | test("^(go|v)?1\\.27\\.0$"))
+              | select((.version // "") | test("^(go|v)?1\\.27\\.3$"))
             ] | length >= 1
           ' evidence/dapper.cdx.json >/dev/null
           jq -e '
@@ -874,6 +874,8 @@ jobs:
             test "$critical" -eq 0
             test "$high" -eq 0
           done
+
+          test "$(jq '[.Results[]?.Vulnerabilities[]?] | length' evidence/runtime-security.json)" -eq 0
 
           source_sbom_report=evidence/source-sbom-security.json
           source_sbom_findings="$(jq '[.Results[]?.Vulnerabilities[]?] | length' "$source_sbom_report")"
