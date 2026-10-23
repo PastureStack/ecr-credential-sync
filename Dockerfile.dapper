@@ -31,6 +31,8 @@ COPY ubuntu-apt.lock /usr/share/pasturestack/manifests/ubuntu-apt.lock
 COPY --chmod=0555 scripts/check-buildx-module-versions /usr/local/libexec/pasturestack/check-buildx-module-versions
 COPY --chmod=0555 scripts/check-go-telemetry-state /usr/local/libexec/pasturestack/check-go-telemetry-state
 COPY toolchain/buildx-security.patch /usr/share/pasturestack/patches/buildx-security.patch
+COPY toolchain/ubuntu-security-packages.lock /usr/share/pasturestack/manifests/ubuntu-security-packages.lock
+COPY scripts/install-ubuntu-security-updates /usr/local/libexec/pasturestack/install-ubuntu-security-updates
 
 RUN set -eux; \
     case "${SOURCE_DATE_EPOCH}" in ''|*[!0-9]*) exit 64 ;; esac; \
@@ -113,6 +115,8 @@ RUN set -eux; \
         test "$(dpkg-query -W -f='${Version}' "${package}")" = "${expected}"; \
     done; \
     test "$(jq --version)" = "jq-1.8.1"; \
+    sh /usr/local/libexec/pasturestack/install-ubuntu-security-updates \
+        /usr/share/pasturestack/manifests/ubuntu-security-packages.lock /etc/ssl/certs/ca-certificates.crt; \
     { \
         printf 'record\tname\tarchitecture\tversion\n'; \
         printf 'metadata\tschema\t-\tpasturestack.dpkg-manifest/v1\n'; \
@@ -244,7 +248,7 @@ RUN set -eux; \
     if grep -F 'github.com/moby/go-archive v0.2.1' go.mod vendor/modules.txt; then exit 1; fi; \
     if grep -F 'golang.org/x/mod v0.38.0' go.mod vendor/modules.txt; then exit 1; fi; \
     GO111MODULE=on GOTOOLCHAIN=local GOWORK=off GOPROXY=https://proxy.golang.org GOSUMDB=sum.golang.org GOMODCACHE=/tmp/buildx-go-mod \
-        go get "google.golang.org/grpc@${BUILDX_GRPC_VERSION}" "golang.org/x/net@v0.60.0"; \
+        go get "google.golang.org/grpc@${BUILDX_GRPC_VERSION}" "golang.org/x/net@v0.60.0" "github.com/containerd/containerd/v2@v2.3.4"; \
     GO111MODULE=on GOTOOLCHAIN=local GOWORK=off GOPROXY=https://proxy.golang.org GOSUMDB=sum.golang.org GOMODCACHE=/tmp/buildx-go-mod go mod download; \
     GO111MODULE=on GOTOOLCHAIN=local GOWORK=off GOPROXY=off GOSUMDB=sum.golang.org GOMODCACHE=/tmp/buildx-go-mod go mod verify; \
     test "$(GO111MODULE=on GOTOOLCHAIN=local GOWORK=off GOPROXY=off GOSUMDB=sum.golang.org GOMODCACHE=/tmp/buildx-go-mod go list -mod=mod -m -f '{{.Version}}' google.golang.org/grpc)" = "${BUILDX_GRPC_VERSION}"; \
