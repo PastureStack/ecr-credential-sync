@@ -114,13 +114,48 @@ jobs:
           mkdir -m 0700 "$cache"
           printf 'TRIVY_CACHE_IDENTITY=%s\n' "$(stat -Lc '%d:%i:%u:%g:%a' "$cache")" >> "$GITHUB_ENV"
           docker run --rm -v "$cache:/root/.cache/trivy" "$TRIVY_IMAGE" image --download-db-only
+          # The release rebuild must satisfy the same complete builder policy as
+          # the candidate; prior green checks are not a substitute for these bytes.
+          mkdir -p evidence
+          docker run --rm --network none \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "$PWD/evidence:/evidence" \
+            -v "$cache:/root/.cache/trivy" \
+            "$TRIVY_IMAGE" image --skip-db-update --offline-scan \
+            --scanners vuln,secret --list-all-pkgs --format json \
+            --output /evidence/dapper-security.json "$DAPPER_IMAGE"
+          docker run --rm --network none \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "$PWD/evidence:/evidence" \
+            -v "$cache:/root/.cache/trivy" \
+            "$TRIVY_IMAGE" image --skip-db-update --offline-scan --format cyclonedx \
+            --output /evidence/dapper.cdx.json "$DAPPER_IMAGE"
+          bash .github/scripts/check-builder-header-boundary.sh "$DAPPER_IMAGE" > evidence/dapper-header-boundary.json
+          docker run --rm --entrypoint cat "$DAPPER_IMAGE" /usr/share/pasturestack/manifests/buildx-package-graph.txt > evidence/buildx-package-graph.txt
+          docker run --rm --entrypoint cat "$DAPPER_IMAGE" /usr/share/pasturestack/manifests/docker-package-graph.txt > evidence/docker-package-graph.txt
+          container=$(docker create "$DAPPER_IMAGE")
+          docker cp "$container:/usr/bin/docker" evidence/docker-cli
+          docker rm "$container"
+          sha256sum evidence/docker-cli | awk '{print $1}' > evidence/docker-cli.sha256
+          chmod +x evidence/docker-cli
+          PYTHONDONTWRITEBYTECODE=1 python3 .github/scripts/docker_manifest_digest_proof.py > evidence/docker-manifest-digest-proof.json
+          PYTHONDONTWRITEBYTECODE=1 python3 .github/scripts/test_builder_vulnerability_policy.py
+          python3 .github/scripts/enforce-runtime-vulnerabilities.py --scope builder --repository PastureStack/ecr-credential-sync < evidence/dapper-security.json
+          test "$(date -u +%s)" -lt "$(date -u -d '2026-11-06T00:00:00Z' +%s)"
+          cp .github/dapper-unfixed.json .github/dapper-headers.json evidence/
+          tar --sort=name --owner=0 --group=0 --numeric-owner --exclude=docker-cli \
+            -C evidence -cJf "$PWD/$release_dir/ecr-credential-sync-${RELEASE_TAG#v}-builder-evidence.tar.xz" .
           docker run --rm --network none \
             -v /var/run/docker.sock:/var/run/docker.sock \
             -v "$PWD/$release_dir:/release" \
             -v "$cache:/root/.cache/trivy" \
             "$TRIVY_IMAGE" image --skip-db-update --offline-scan \
             --scanners vuln,secret --severity UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL \
+            --list-all-pkgs --format json \
+            --output "/release/ecr-credential-sync-${RELEASE_TAG#v}-runtime-security.json" \
             --exit-code 1 "$RUNTIME_IMAGE"
+          jq -e '[.Results[]? | select(.Type == "gobinary") | .Packages[]?] | length > 0' \
+            "$release_dir/ecr-credential-sync-${RELEASE_TAG#v}-runtime-security.json" >/dev/null
           docker run --rm --network none \
             -v /var/run/docker.sock:/var/run/docker.sock \
             -v "$PWD/$release_dir:/release" \
@@ -155,6 +190,8 @@ jobs:
               "ecr-credential-sync-${RELEASE_TAG#v}-image.cdx.json" \
               "ecr-credential-sync-${RELEASE_TAG#v}-source.cdx.json" \
               "ecr-credential-sync-${RELEASE_TAG#v}-runtime-build.json" \
+              "ecr-credential-sync-${RELEASE_TAG#v}-runtime-security.json" \
+              "ecr-credential-sync-${RELEASE_TAG#v}-builder-evidence.tar.xz" \
               > SHA256SUMS
           )
 
@@ -218,7 +255,20 @@ jobs:
             "dist/release/ecr-credential-sync-${RELEASE_TAG#v}-image.cdx.json" \
             "dist/release/ecr-credential-sync-${RELEASE_TAG#v}-source.cdx.json" \
             "dist/release/ecr-credential-sync-${RELEASE_TAG#v}-runtime-build.json" \
+            "dist/release/ecr-credential-sync-${RELEASE_TAG#v}-runtime-security.json" \
+            "dist/release/ecr-credential-sync-${RELEASE_TAG#v}-builder-evidence.tar.xz" \
             dist/release/SHA256SUMS
+
+      - name: Preserve complete release scan evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ecr-release-security-${{ github.sha }}
+          path: |
+            evidence/
+            dist/release/
+          if-no-files-found: warn
+          retention-days: 30
 
       - name: Clean run-owned resources
         if: always()
@@ -248,7 +298,7 @@ jobs:
             bash scripts/cleanup-exact-trivy-cache \
               "$RUNNER_TEMP/trivy-cache" "$TRIVY_CACHE_IDENTITY" || cleanup_status=$?
           fi
-          rm -rf -- bin dist \
+          rm -rf -- bin dist evidence \
             "$RUNNER_TEMP/ecr-release-buildx" \
             "$RUNNER_TEMP/ecr-release-docker-config" || cleanup_status=$?
           exit "$cleanup_status"
