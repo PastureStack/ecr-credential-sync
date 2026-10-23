@@ -110,7 +110,7 @@ vendor/security patch
 Go 1.27.3 archive
 (`sha256:65efbc80fdc1fa2cd2631cad5b481777a68e8725f34e89f50fc6ac714e379b40`),
 and resulting Linux amd64 binary
-(`sha256:05d6007425f3ec0c9bcf10aad49034e4342c34bd63ecd1cb0ac89ddfdf934c79`).
+(`sha256:577838443a630efa351e2a54a1c3a54919ae77bebbf44659af702606c178044d`).
 As of 2026-09-09, upstream `v0.36.1` remains the latest signed Buildx release,
 but its official binary still records `go-archive v0.2.1`, `x/mod v0.38.0`, and
 `grpc v1.82.1`; upstream has no signed release containing all fixed module

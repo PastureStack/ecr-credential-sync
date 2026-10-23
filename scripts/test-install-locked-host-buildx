@@ -68,7 +68,7 @@ case "${1-}" in
     fi
     if [ "$#" -eq 3 ] && [ "$2" = -m ]; then
       go_archive=v0.3.0
-      x_mod=v0.40.0
+      x_mod=v0.41.0
       grpc=v1.83.2
       case "${FIXTURE_CASE:-success}" in
         cve-2026-17106) go_archive=v0.2.1 ;;
@@ -303,7 +303,7 @@ test "$(stat -c '%a' "$installed_path")" = 555
 test "$("$installed_path" version)" = \
   'github.com/docker/buildx v0.36.1 1d8dde89b8aba914e05e45366770736fea1fd690'
 bash "${fixture_repo}/scripts/check-buildx-module-versions" \
-  "${fixture_destination}/buildx-go-version.txt" go1.27.3 v0.3.0 v0.40.0 v1.83.2 >/dev/null
+  "${fixture_destination}/buildx-go-version.txt" go1.27.3 v0.3.0 v0.41.0 v1.83.2 >/dev/null
 test "$(grep -Fc $'binary\tbuildx-first\tv0.36.1\t' "${fixture_destination}/buildx-build.tsv")" -eq 1
 test "$(grep -Fc $'binary\tbuildx-second\tv0.36.1\t' "${fixture_destination}/buildx-build.tsv")" -eq 1
 test "$(find "$fixture_destination" -mindepth 1 -maxdepth 1 -printf '%f\n' | LC_ALL=C sort)" = \

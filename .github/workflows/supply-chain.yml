@@ -755,7 +755,7 @@ jobs:
             exact_property("pasturestack:host-buildx-go-version"; "1.27.3") and
             exact_property("pasturestack:host-buildx-go-sha256"; "65efbc80fdc1fa2cd2631cad5b481777a68e8725f34e89f50fc6ac714e379b40") and
             exact_property("pasturestack:host-buildx-go-archive-version"; "v0.3.0") and
-            exact_property("pasturestack:host-buildx-x-mod-version"; "v0.40.0") and
+            exact_property("pasturestack:host-buildx-x-mod-version"; "v0.41.0") and
             exact_property("pasturestack:host-buildx-upstream-grpc-version"; "v1.82.1") and
             exact_property("pasturestack:host-buildx-grpc-version"; "v1.83.2") and
             exact_property("pasturestack:host-buildx-binary-sha256"; "05d6007425f3ec0c9bcf10aad49034e4342c34bd63ecd1cb0ac89ddfdf934c79") and
@@ -805,7 +805,7 @@ jobs:
               | select(.purl == "pkg:golang/github.com/moby/go-archive@v0.3.0")
             ] | length) >= 1 and
             ([.components[]?
-              | select(.purl == "pkg:golang/golang.org/x/mod@v0.40.0")
+              | select(.purl == "pkg:golang/golang.org/x/mod@v0.41.0")
             ] | length) >= 1 and
             ([.components[]?
               | select(.purl == "pkg:golang/google.golang.org/grpc@v1.83.2")

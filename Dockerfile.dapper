@@ -58,7 +58,8 @@ ARG BUILDX_SOURCE_DATE_EPOCH=1785856317
 ARG BUILDX_SOURCE_SHA256=fb28b5c2a198d05482f0656dfb7ee161240a904e36697bf7108e5d517f23854b
 ARG BUILDX_SECURITY_PATCH_SHA256=a29fdda204d592d0d46ed32b5fdc4336a7b3a7276301836d0a75b9386ca780f7
 ARG BUILDX_GO_ARCHIVE_VERSION=v0.3.0
-ARG BUILDX_X_MOD_VERSION=v0.40.0
+ARG BUILDX_BASELINE_X_MOD_VERSION=v0.40.0
+ARG BUILDX_X_MOD_VERSION=v0.41.0
 ARG BUILDX_UPSTREAM_GRPC_VERSION=v1.82.1
 ARG BUILDX_GRPC_VERSION=v1.83.2
 ARG UBUNTU_APT_SNAPSHOT=20260909T000000Z
@@ -236,10 +237,10 @@ RUN set -eux; \
         fi; \
     done < /tmp/buildx-patched-go-files.txt; \
     test "$(grep -Fxc "$(printf '\tgithub.com/moby/go-archive %s' "${BUILDX_GO_ARCHIVE_VERSION}")" go.mod)" -eq 1; \
-    test "$(grep -Fxc "$(printf '\tgolang.org/x/mod %s' "${BUILDX_X_MOD_VERSION}")" go.mod)" -eq 1; \
+    test "$(grep -Fxc "$(printf '\tgolang.org/x/mod %s' "${BUILDX_BASELINE_X_MOD_VERSION}")" go.mod)" -eq 1; \
     test "$(grep -Fxc "$(printf '\tgoogle.golang.org/grpc %s' "${BUILDX_UPSTREAM_GRPC_VERSION}")" go.mod)" -eq 1; \
     grep -Fqx "# github.com/moby/go-archive ${BUILDX_GO_ARCHIVE_VERSION}" vendor/modules.txt; \
-    grep -Fqx "# golang.org/x/mod ${BUILDX_X_MOD_VERSION}" vendor/modules.txt; \
+    grep -Fqx "# golang.org/x/mod ${BUILDX_BASELINE_X_MOD_VERSION}" vendor/modules.txt; \
     if grep -F 'github.com/moby/go-archive v0.2.1' go.mod vendor/modules.txt; then exit 1; fi; \
     if grep -F 'golang.org/x/mod v0.38.0' go.mod vendor/modules.txt; then exit 1; fi; \
     GO111MODULE=on GOTOOLCHAIN=local GOWORK=off GOPROXY=https://proxy.golang.org GOSUMDB=sum.golang.org GOMODCACHE=/tmp/buildx-go-mod \
